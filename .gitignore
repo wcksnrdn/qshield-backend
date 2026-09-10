@@ -19,3 +19,6 @@ qshield.db-shm
 
 # Data container
 data/
+
+# Sertifikat lokal — JANGAN di-commit, key.pem itu kunci privat
+certs/

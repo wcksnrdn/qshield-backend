@@ -166,6 +166,51 @@ def _c5():
             f"palsu -> {b['verdict']}/{b['action']} (skor {b['risk_score']})")
 
 
+@periksa("Halaman scanner tersaji")
+def _c6():
+    from fastapi.testclient import TestClient
+
+    from qshield import api
+    r = TestClient(api.app).get("/")
+    assert r.status_code == 200, f"GET / -> {r.status_code}"
+    assert "Q-Shield" in r.text, "halaman tidak memuat judulnya"
+    return f"{len(r.text)} byte, mandiri tanpa build step"
+
+
+@periksa("Sertifikat HTTPS cocok dengan IP laptop sekarang")
+def _c7():
+    import socket
+    import subprocess
+
+    cert = os.path.join(AKAR, "certs", "cert.pem")
+    assert os.path.exists(cert), (
+        "certs/cert.pem belum ada. Kamera dan GPS di HP menuntut HTTPS:\n"
+        "           python scripts/make_cert.py")
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    finally:
+        s.close()
+
+    hasil = subprocess.run(
+        ["openssl", "x509", "-in", cert, "-noout", "-text"],
+        capture_output=True, text=True)
+    san = [b for b in hasil.stdout.split("\n") if "IP Address" in b]
+    assert san, "sertifikat tidak punya Subject Alternative Name"
+    assert ip in san[0], (
+        f"IP laptop sekarang {ip}, tapi sertifikat dibuat untuk "
+        f"{san[0].strip()}. Pindah WiFi? Jalankan ulang:\n"
+        f"           python scripts/make_cert.py")
+
+    sisa = subprocess.run(
+        ["openssl", "x509", "-in", cert, "-noout", "-checkend", "86400"],
+        capture_output=True, text=True)
+    assert sisa.returncode == 0, "sertifikat kedaluwarsa dalam 24 jam"
+    return f"berlaku untuk {ip}, dan masih hidup"
+
+
 @periksa("Seluruh suite pengujian hijau", wajib=False)
 def _c6():
     env = dict(os.environ)

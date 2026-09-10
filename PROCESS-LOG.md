@@ -840,6 +840,50 @@ mesin yang sudah diubahnya sendiri.
 
 ---
 
+## Keputusan 28 — Scanner disajikan backend, dan HTTPS ternyata wajib
+
+**Temuan yang mengubah rencana.** Kamera (`getUserMedia`) dan GPS
+(`navigator.geolocation`) sama-sama menuntut *secure context*. Membuka
+`http://192.168.x.x:8000` dari HP bukan secure context, jadi browser
+memblokir keduanya — tanpa bisa dinegosiasikan. `localhost` dikecualikan,
+tapi HP tidak bisa membuka localhost laptop.
+
+Artinya tanpa HTTPS, frontend secantik apa pun tidak bisa memindai
+maupun tahu lokasi, dan demo mati sebelum dimulai. Ini tidak muncul di
+catatan fase 1 mana pun. `scripts/make_cert.py` menutupnya; SAN-nya
+memuat IP LAN, karena browser modern mengabaikan Common Name sepenuhnya.
+
+**Halaman mandiri, bukan Next.js.** Satu berkas HTML tanpa build step,
+tanpa npm, tanpa CDN, disajikan dari proses yang sama dengan API.
+Alasannya seluruhnya soal hari-H:
+
+- WiFi acara diasumsikan buruk, jadi tidak boleh ada yang perlu diunduh
+- satu origin berarti tidak ada urusan CORS sama sekali
+- satu proses berarti satu hal yang bisa mati, bukan dua
+- tidak ada `npm install` yang bisa gagal pagi hari-H
+
+Plus Jakarta Sans dipakai kalau memang terpasang di perangkat; kalau
+tidak, jatuh ke font sistem — bukan ke permintaan jaringan.
+
+**Yang ditampilkan adalah `reasons`, bukan `risk_score`.** Angka tidak
+bisa dijelaskan ke pengguna maupun juri; kalimatnya bisa. Skornya tetap
+ada sebagai chip kecil untuk yang ingin melihat.
+
+**Cooling-off menampilkan hitung mundur.** Keputusan 3 memilih penundaan
+sebagai respons risiko tertinggi karena seluruh modus rekayasa sosial
+bergantung pada tekanan waktu. Kalau penundaannya tidak terlihat, alasan
+memilihnya ikut hilang.
+
+**Yang belum diverifikasi:** tampilannya belum pernah dilihat di browser
+sungguhan — tidak ada browser tool di mesin ini. Yang sudah diperiksa
+tanpa browser: seluruh ID yang dirujuk JS ada di HTML, setiap kelas yang
+dipasang JS punya aturan CSS, dan `tests/test_frontend.py` memastikan
+badan permintaan yang disusun halaman lolos validasi API sekaligus
+setiap field yang dibacanya memang ada di tanggapan. Rupanya harus
+dilihat sendiri sebelum gladi bersih.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -855,6 +899,7 @@ test_hardening.py    25 pemeriksaan: validasi input, autentikasi klien,
                      rate limit, header, audit tanpa PII, mode replay,
                      dan konkurensi
 test_contract.py     kunci bentuk API v1 — gagal kalau ada yang bergeser
+test_frontend.py     kecocokan halaman scanner dengan API
 ```
 
 Dokumen ancaman terpisah ada di `THREAT-MODEL.md`.

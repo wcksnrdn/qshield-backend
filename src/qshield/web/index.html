@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12101F">
+<title>Q-Shield</title>
+<style>
+/* Tanpa CDN dan tanpa build step: seluruh halaman ini mandiri supaya
+   tidak ada yang perlu diunduh saat demo. WiFi acara diasumsikan buruk.
+   Plus Jakarta Sans dipakai kalau memang terpasang di perangkat; kalau
+   tidak, jatuh ke font sistem — bukan ke permintaan jaringan. */
+:root{
+  --bg:#12101F; --bg2:#1B1830; --card:#221F3A; --line:#302B4E;
+  --ink:#F4F3FA; --ink2:#A9A3C7;
+  --brand:#7C6CF5; --brand2:#5B4BE8;
+  --proceed:#22C08A; --warn:#F0A82C; --stepup:#F0742C; --cool:#E5484D;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  line-height:1.5;padding-bottom:env(safe-area-inset-bottom)}
+.wrap{max-width:520px;margin:0 auto;padding:16px}
+header{display:flex;align-items:center;gap:10px;padding:14px 4px 18px}
+.logo{width:30px;height:30px;border-radius:9px;flex:none;
+  background:linear-gradient(140deg,var(--brand),var(--brand2));
+  display:grid;place-items:center;font-weight:800;font-size:15px}
+h1{font-size:17px;margin:0;font-weight:700;letter-spacing:-.2px}
+header small{color:var(--ink2);font-size:11.5px;display:block;font-weight:500}
+.gear{margin-left:auto;background:none;border:0;color:var(--ink2);
+  font-size:20px;cursor:pointer;padding:6px}
+
+.stage{position:relative;border-radius:20px;overflow:hidden;
+  background:var(--bg2);border:1px solid var(--line);aspect-ratio:1;
+  display:grid;place-items:center}
+video{width:100%;height:100%;object-fit:cover;display:none}
+.stage.live video{display:block}
+.frame{position:absolute;inset:16%;border-radius:16px;pointer-events:none;
+  box-shadow:0 0 0 2000px rgba(18,16,31,.55);display:none}
+.stage.live .frame{display:block}
+.frame::before,.frame::after,.frame i::before,.frame i::after{
+  content:'';position:absolute;width:28px;height:28px;border:3px solid var(--brand)}
+.frame::before{top:-1px;left:-1px;border-right:0;border-bottom:0;border-radius:12px 0 0 0}
+.frame::after{top:-1px;right:-1px;border-left:0;border-bottom:0;border-radius:0 12px 0 0}
+.frame i::before{bottom:-1px;left:-1px;border-right:0;border-top:0;border-radius:0 0 0 12px}
+.frame i::after{bottom:-1px;right:-1px;border-left:0;border-top:0;border-radius:0 0 12px 0}
+.idle{text-align:center;padding:28px;color:var(--ink2)}
+.idle .big{font-size:40px;margin-bottom:10px}
+.stage.live .idle{display:none}
+
+button{font-family:inherit}
+.btn{width:100%;margin-top:12px;padding:15px;border-radius:14px;border:0;
+  background:linear-gradient(140deg,var(--brand),var(--brand2));color:#fff;
+  font-size:15.5px;font-weight:700;cursor:pointer}
+.btn:active{transform:scale(.99)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink2);font-weight:600}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+
+.note{margin-top:12px;padding:12px 14px;border-radius:12px;font-size:13px;
+  background:rgba(240,116,44,.1);border:1px solid rgba(240,116,44,.3);color:#FFC9A8}
+.note b{color:#fff}
+.note code{background:rgba(0,0,0,.3);padding:1px 5px;border-radius:5px;font-size:12px}
+
+/* --- hasil --- */
+.result{margin-top:16px;border-radius:20px;overflow:hidden;
+  background:var(--card);border:1px solid var(--line);display:none}
+.result.show{display:block;animation:up .28s ease}
+@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.band{padding:18px 18px 16px;display:flex;align-items:center;gap:14px}
+.dot{width:44px;height:44px;border-radius:50%;flex:none;display:grid;
+  place-items:center;font-size:21px;font-weight:800;color:#0F0D1A}
+.band h2{margin:0;font-size:17px;font-weight:800;letter-spacing:-.2px}
+.band p{margin:1px 0 0;font-size:12.5px;color:var(--ink2);font-weight:500}
+.a-proceed .dot{background:var(--proceed)} .a-proceed h2{color:var(--proceed)}
+.a-warn .dot{background:var(--warn)} .a-warn h2{color:var(--warn)}
+.a-step_up .dot{background:var(--stepup)} .a-step_up h2{color:var(--stepup)}
+.a-cooling_off .dot{background:var(--cool);color:#fff} .a-cooling_off h2{color:var(--cool)}
+
+.merchant{padding:0 18px 14px;display:flex;gap:10px;align-items:baseline;
+  border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
+.merchant .nm{font-weight:700;font-size:14.5px}
+.merchant .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:11.5px;color:var(--ink2)}
+.reasons{list-style:none;margin:0;padding:0 18px}
+.reasons li{position:relative;padding:0 0 12px 18px;font-size:14px;color:#E4E1F2}
+.reasons li::before{content:'';position:absolute;left:2px;top:8px;width:6px;height:6px;
+  border-radius:50%;background:var(--brand)}
+.meta{padding:6px 18px 18px;display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:11px;padding:5px 10px;border-radius:8px;background:var(--bg2);
+  border:1px solid var(--line);color:var(--ink2);font-weight:600}
+.chip b{color:var(--ink)}
+.replay{margin:0 18px 14px;padding:9px 12px;border-radius:10px;font-size:12px;
+  background:rgba(124,108,245,.14);border:1px solid rgba(124,108,245,.35);color:#CFC7FF}
+
+/* cooling-off: penundaan itu inti responsnya, jadi harus terlihat */
+.cool-timer{margin:0 18px 16px;padding:14px;border-radius:12px;text-align:center;
+  background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.3)}
+.cool-timer .n{font-size:30px;font-weight:800;color:var(--cool);
+  font-variant-numeric:tabular-nums;line-height:1.1}
+.cool-timer small{color:#F5A9AB;font-size:12px}
+
+/* --- panel setelan --- */
+.sheet{position:fixed;inset:0;background:rgba(8,7,14,.7);display:none;
+  align-items:flex-end;z-index:9}
+.sheet.show{display:flex}
+.panel{background:var(--bg2);width:100%;max-width:520px;margin:0 auto;
+  border-radius:20px 20px 0 0;padding:18px 18px 26px;
+  border-top:1px solid var(--line);max-height:88vh;overflow:auto}
+.panel h3{margin:2px 0 14px;font-size:15px}
+label{display:block;font-size:12px;color:var(--ink2);margin:12px 0 5px;font-weight:600}
+input,textarea,select{width:100%;padding:11px 12px;border-radius:11px;
+  background:var(--card);border:1px solid var(--line);color:var(--ink);
+  font-size:14px;font-family:inherit}
+textarea{min-height:78px;resize:vertical;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.hint{font-size:11.5px;color:var(--ink2);margin-top:6px}
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.presets button{padding:11px 8px;border-radius:11px;border:1px solid var(--line);
+  background:var(--card);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Q</div>
+    <div>
+      <h1>Q-Shield</h1>
+      <small>Verifikasi sebelum PIN</small>
+    </div>
+    <button class="gear" id="gear" aria-label="Setelan">&#9881;</button>
+  </header>
+
+  <div class="stage" id="stage">
+    <video id="video" playsinline muted></video>
+    <div class="frame"><i></i></div>
+    <div class="idle" id="idle">
+      <div class="big">&#9635;</div>
+      <div>Arahkan kamera ke stiker QRIS</div>
+    </div>
+  </div>
+
+  <button class="btn" id="scan">Mulai memindai</button>
+  <button class="btn ghost" id="manual">Masukkan kode manual</button>
+  <div id="notes"></div>
+
+  <div class="result" id="result">
+    <div class="band" id="band">
+      <div class="dot" id="dot"></div>
+      <div><h2 id="title"></h2><p id="sub"></p></div>
+    </div>
+    <div class="replay" id="replay" style="display:none"></div>
+    <div class="cool-timer" id="cool" style="display:none">
+      <div class="n" id="coolN">30</div>
+      <small>Tunggu sebentar sebelum melanjutkan. Penipuan bergantung pada terburu-buru.</small>
+    </div>
+    <div class="merchant" id="merchant"></div>
+    <ul class="reasons" id="reasons"></ul>
+    <div class="meta" id="meta"></div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet">
+  <div class="panel">
+    <h3>Setelan &amp; alat demo</h3>
+
+    <label>Kunci API <span style="opacity:.6">(kosongkan bila server dijalankan dengan QSHIELD_AUTH=off)</span></label>
+    <input id="apikey" placeholder="X-API-Key" autocomplete="off">
+
+    <label>Sumber lokasi</label>
+    <select id="src">
+      <option value="live">live — GPS perangkat ini</option>
+      <option value="replay">replay — koordinat rekaman</option>
+    </select>
+    <div class="hint">Mode replay ditandai terbuka di tanggapan dan jejak audit.
+      Ia tidak mengubah penilaian sedikit pun.</div>
+
+    <div class="row">
+      <div><label>Lintang (replay)</label><input id="rlat" placeholder="-6.914744"></div>
+      <div><label>Bujur (replay)</label><input id="rlng" placeholder="107.609810"></div>
+    </div>
+    <div class="row">
+      <div><label>Akurasi (m)</label><input id="racc" placeholder="8"></div>
+      <div><label>&nbsp;</label>
+        <button class="btn ghost" style="margin:0" id="useHere">Pakai posisi sekarang</button></div>
+    </div>
+
+    <label>Kode QRIS manual</label>
+    <textarea id="payload" placeholder="00020101021126660014ID.CO.QRIS.WWW..."></textarea>
+    <button class="btn" id="send" style="margin-top:10px">Verifikasi kode ini</button>
+
+    <label>Pengenal perangkat (anonim)</label>
+    <input id="dev" readonly>
+    <div class="hint">Dibangkitkan acak di perangkat ini. Bukan identitas,
+      dan tidak pernah disimpan server apa adanya.</div>
+
+    <button class="btn ghost" id="close" style="margin-top:18px">Tutup</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const AKSI = {
+  proceed:   {t:"Aman dilanjutkan", s:"Ikatan merchant-lokasi cocok", i:"✓"},
+  warn:      {t:"Periksa dulu",     s:"Belum cukup bukti untuk memastikan", i:"!"},
+  step_up:   {t:"Butuh verifikasi", s:"Ada yang tidak sesuai di lokasi ini", i:"!"},
+  cooling_off:{t:"Berhenti dulu",   s:"Terdeteksi ketidaksesuaian serius", i:"✕"}
+};
+const VERDICT = {verified:"terverifikasi", unknown:"belum dikenal", anomaly:"anomali"};
+
+// Pengenal perangkat: acak, bertahan di perangkat ini saja.
+let dev = localStorage.getItem("qs_dev");
+if (!dev) {
+  dev = (crypto.randomUUID ? crypto.randomUUID()
+        : "dev-" + Math.random().toString(36).slice(2) + Date.now().toString(36));
+  localStorage.setItem("qs_dev", dev);
+}
+$("dev").value = dev;
+$("apikey").value = localStorage.getItem("qs_key") || "";
+$("apikey").addEventListener("change", e => localStorage.setItem("qs_key", e.target.value.trim()));
+["src","rlat","rlng","racc"].forEach(k => {
+  const el = $(k), v = localStorage.getItem("qs_" + k);
+  if (v) el.value = v;
+  el.addEventListener("change", e => localStorage.setItem("qs_" + k, e.target.value));
+});
+
+function catatan(html){ $("notes").innerHTML = '<div class="note">' + html + '</div>'; }
+function bersihkanCatatan(){ $("notes").innerHTML = ""; }
+
+// Secure context adalah syarat mati untuk kamera dan geolocation.
+// Diberitahu di muka, lengkap dengan cara memperbaikinya — bukan
+// dibiarkan gagal diam-diam saat tombol ditekan.
+const AMAN = window.isSecureContext;
+if (!AMAN) {
+  catatan("<b>Kamera dan GPS diblokir browser.</b> Halaman ini dibuka lewat " +
+    "koneksi tidak aman, dan keduanya menuntut HTTPS. Jalankan ulang server " +
+    "dengan sertifikat lokal:<br><code>python scripts/make_cert.py</code><br>" +
+    "Sementara itu, mode replay dan kode manual tetap bisa dipakai.");
+}
+
+async function lokasi(){
+  const src = $("src").value;
+  if (src === "replay") {
+    const lat = parseFloat($("rlat").value), lng = parseFloat($("rlng").value);
+    const acc = parseFloat($("racc").value || "8");
+    if (!isFinite(lat) || !isFinite(lng))
+      throw new Error("Koordinat replay belum diisi di setelan.");
+    return {lat, lng, accuracy_m: acc, location_source: "replay"};
+  }
+  if (!navigator.geolocation) throw new Error("Perangkat ini tidak punya geolocation.");
+  const p = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(
+    ok, no, {enableHighAccuracy:true, timeout:12000, maximumAge:0}));
+  return {lat: p.coords.latitude, lng: p.coords.longitude,
+          accuracy_m: p.coords.accuracy, location_source: "live"};
+}
+
+let hitungMundur = null;
+
+async function verifikasi(payload){
+  bersihkanCatatan();
+  let loc;
+  try { loc = await lokasi(); }
+  catch (e) {
+    catatan("<b>Lokasi tidak bisa diambil.</b> " + (e.message || e) +
+      (AMAN ? "" : " Ini akibat koneksi tidak aman."));
+    return;
+  }
+  const body = Object.assign({payload, device_anon_id: dev}, loc);
+  const head = {"Content-Type":"application/json"};
+  const key = $("apikey").value.trim();
+  if (key) head["X-API-Key"] = key;
+
+  let r, d;
+  try {
+    r = await fetch("/api/v1/verify", {method:"POST", headers:head, body:JSON.stringify(body)});
+    d = await r.json();
+  } catch (e) { catatan("<b>Tidak bisa menghubungi server.</b> " + e.message); return; }
+
+  if (!r.ok) {
+    const p = {401:"Kunci API tidak valid atau belum diisi di setelan.",
+               413:"Kode terlalu panjang.",
+               422:"Kode ini bukan payload QRIS yang sah.",
+               429:"Terlalu banyak permintaan, tunggu sebentar.",
+               503:"Server belum dikonfigurasi kunci API."};
+    catatan("<b>Ditolak (" + r.status + ").</b> " + (p[r.status] || (d && d.detail) || ""));
+    return;
+  }
+  tampilkan(d);
+}
+
+function tampilkan(d){
+  const a = AKSI[d.action] || AKSI.warn;
+  const band = $("band");
+  band.className = "band a-" + d.action;
+  $("dot").textContent = a.i;
+  $("title").textContent = a.t;
+  $("sub").textContent = a.s + " · " + (VERDICT[d.verdict] || d.verdict);
+
+  const m = d.merchant || {};
+  $("merchant").innerHTML =
+    '<span class="nm">' + esc(m.name || "Merchant tidak dikenal") + '</span>' +
+    '<span class="id">' + esc(m.nmid || "-") + '</span>' +
+    (m.city ? '<span class="id">' + esc(m.city) + '</span>' : "");
+
+  // reasons yang ditampilkan, bukan risk_score: angka tidak bisa
+  // dijelaskan ke pengguna, kalimatnya bisa.
+  $("reasons").innerHTML = (d.reasons || []).map(x => "<li>" + esc(x) + "</li>").join("");
+
+  const L = d.layers || {};
+  $("meta").innerHTML =
+    chip("Lokasi", L.location) + chip("Perilaku", L.behavior) +
+    chip("Skor", d.risk_score) + chip("Waktu", d.processing_ms + " ms");
+
+  const rp = $("replay");
+  if (d.location_source === "replay") {
+    rp.style.display = "";
+    rp.textContent = "Koordinat diputar ulang dari rekaman — bukan GPS langsung.";
+  } else rp.style.display = "none";
+
+  // Cooling-off berarti MENUNDA, bukan menolak: seluruh modus rekayasa
+  // sosial bergantung pada tekanan waktu. Penundaannya harus terlihat.
+  clearInterval(hitungMundur);
+  const cool = $("cool");
+  if (d.action === "cooling_off") {
+    let sisa = 30;
+    cool.style.display = ""; $("coolN").textContent = sisa;
+    hitungMundur = setInterval(() => {
+      sisa--; $("coolN").textContent = Math.max(0, sisa);
+      if (sisa <= 0) clearInterval(hitungMundur);
+    }, 1000);
+  } else cool.style.display = "none";
+
+  $("result").classList.add("show");
+  $("result").scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+const chip = (k,v) => v === undefined || v === null ? "" :
+  '<span class="chip">' + k + ' <b>' + esc(String(v)) + '</b></span>';
+const esc = s => String(s).replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// --- kamera ---
+let stream = null, loop = null;
+
+async function mulaiKamera(){
+  if (!AMAN) { catatan("<b>Kamera butuh HTTPS.</b> Pakai kode manual atau mode replay."); return; }
+  if (!("BarcodeDetector" in window)) {
+    catatan("<b>Browser ini tidak punya pemindai QR bawaan.</b> " +
+      "Chrome di Android punya. Sementara itu, salin kodenya lewat " +
+      "<b>Masukkan kode manual</b>.");
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      {video:{facingMode:{ideal:"environment"}}, audio:false});
+  } catch (e) { catatan("<b>Kamera ditolak.</b> " + e.message); return; }
+
+  const v = $("video");
+  v.srcObject = stream; await v.play();
+  $("stage").classList.add("live");
+  $("scan").textContent = "Berhenti memindai";
+  bersihkanCatatan();
+
+  const det = new BarcodeDetector({formats:["qr_code"]});
+  loop = setInterval(async () => {
+    try {
+      const kode = await det.detect(v);
+      if (kode.length) { const nilai = kode[0].rawValue; stopKamera(); verifikasi(nilai); }
+    } catch (_) { /* frame gagal dibaca, coba lagi di tick berikutnya */ }
+  }, 350);
+}
+
+function stopKamera(){
+  clearInterval(loop); loop = null;
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $("stage").classList.remove("live");
+  $("scan").textContent = "Mulai memindai";
+}
+
+$("scan").onclick = () => stream ? stopKamera() : mulaiKamera();
+$("manual").onclick = () => $("sheet").classList.add("show");
+$("gear").onclick = () => $("sheet").classList.add("show");
+$("close").onclick = () => $("sheet").classList.remove("show");
+$("sheet").onclick = e => { if (e.target === $("sheet")) $("sheet").classList.remove("show"); };
+$("send").onclick = () => {
+  const p = $("payload").value.trim();
+  if (!p) return;
+  $("sheet").classList.remove("show");
+  verifikasi(p);
+};
+$("useHere").onclick = async () => {
+  try {
+    const p = await new Promise((ok,no) => navigator.geolocation.getCurrentPosition(
+      ok, no, {enableHighAccuracy:true, timeout:12000}));
+    $("rlat").value = p.coords.latitude.toFixed(6);
+    $("rlng").value = p.coords.longitude.toFixed(6);
+    $("racc").value = Math.round(p.coords.accuracy);
+    ["rlat","rlng","racc"].forEach(k => localStorage.setItem("qs_"+k, $(k).value));
+  } catch (e) { alert("Tidak bisa mengambil posisi: " + (e.message || e)); }
+};
+</script>
+</body>
+</html>

@@ -13,7 +13,7 @@ from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from . import audit
@@ -271,6 +271,19 @@ def _tandai_replay(verdict, req):
         verdict.reasons = [REPLAY_NOTICE] + list(verdict.reasons)
         verdict.signals = list(verdict.signals) + ["replayed_location"]
     return verdict
+
+
+# Frontend disajikan dari proses yang sama, bukan dari dev server
+# terpisah. Dua alasan, keduanya soal hari-H: satu origin berarti tidak
+# ada urusan CORS sama sekali, dan satu proses berarti satu hal yang
+# bisa mati, bukan dua.
+WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+
+
+@app.get("/", include_in_schema=False)
+def scanner():
+    return FileResponse(os.path.join(WEB, "index.html"),
+                        media_type="text/html")
 
 
 @app.get("/api/v1/health")

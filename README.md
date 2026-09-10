@@ -13,12 +13,37 @@ menggantikan, putusan Layer 1. Aturan komposisinya ada di
 
 ## Menjalankan
 
+### Demo dari HP — baca ini dulu
+
+Kamera (`getUserMedia`) dan GPS (`navigator.geolocation`) **menuntut
+secure context**. Membuka `http://192.168.x.x:8000` dari HP bukan secure
+context, jadi browser memblokir keduanya — tanpa bisa dinegosiasikan.
+`localhost` dikecualikan, tapi HP tidak bisa membuka localhost laptop.
+
+Artinya: **tanpa HTTPS, scanner tidak bisa memindai maupun tahu lokasi.**
+
+```bash
+python scripts/make_cert.py          # sertifikat lokal untuk IP LAN laptop
+uvicorn qshield.api:app --host 0.0.0.0 --port 8000     --ssl-certfile certs/cert.pem --ssl-keyfile certs/key.pem
+```
+
+Lalu buka `https://<ip-laptop>:8000/` dari HP yang satu WiFi. HP akan
+memperingatkan sertifikatnya tidak dikenal — **terima peringatan itu
+sekarang, jangan di depan juri.** Setelah diterima, browser mengingatnya.
+
+Pindah WiFi berarti IP berubah; jalankan ulang `make_cert.py`.
+`scripts/preflight.py` memeriksa kecocokan ini.
+
 ```bash
 python -m venv .venv && source .venv/bin/activate   # sekali saja
 pip install -e .                                     # install package qshield (editable)
 python scripts/seed.py                               # isi data demo, cetak QR asli & palsu
 uvicorn qshield.api:app --reload --host 0.0.0.0 --port 8000
 ```
+
+Scanner: http://localhost:8000/ — halaman mandiri, tanpa build step,
+tanpa npm, tanpa CDN. Disajikan dari proses yang sama dengan API, jadi
+tidak ada urusan CORS dan hanya ada satu proses yang bisa mati.
 
 Dokumentasi interaktif: http://localhost:8000/docs
 
@@ -32,6 +57,7 @@ python tests/test_invariants.py               # kunci regresi kedelapan invarian
 python tests/test_adversarial.py              # 13 skenario dari sisi penyerang
 python tests/test_hardening.py                # input, auth, rate limit, audit, konkurensi
 python tests/test_contract.py                 # kunci bentuk API v1
+python tests/test_frontend.py                 # kecocokan halaman dengan API
 PYTHONPATH=scripts python tests/test_api.py   # test_api.py mengimpor scripts/seed.py
 
 python scripts/calibrate_geo.py               # kalibrasi presisi geohash
@@ -54,11 +80,14 @@ src/qshield/     package utama — import sebagai `qshield` setelah `pip install
   limits.py        pembatasan laju (memori, tanpa menyimpan IP)
   audit.py         jejak audit terstruktur tanpa PII
   api.py           endpoint FastAPI
+  web/index.html   scanner — satu berkas, tanpa build step
 scripts/         skrip yang dijalankan langsung, bukan bagian dari package
   seed.py             isi data demo, cetak QR asli & palsu
   make_qr.py          cetak prop QR + verifikasi keterbacaan (OpenCV)
   venue_fixture.py    rekam koordinat venue, putar ulang naskah demo
   make_apikey.py      terbitkan kunci API untuk satu PJP
+  make_cert.py        sertifikat HTTPS lokal (wajib untuk demo dari HP)
+  preflight.py        pemeriksaan kesiapan sebelum demo
   calibrate_geo.py    kalibrasi presisi geohash
   calibrate_layer2.py kalibrasi konstanta Layer 2
 tests/           test_*.py — dijalankan langsung (bukan lewat pytest)
