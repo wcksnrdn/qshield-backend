@@ -263,9 +263,22 @@ def evaluate(
     if not reasons:
         reasons.append("Belum ada cukup data untuk memverifikasi lokasi ini")
 
+    action = _action_for(score)
+
+    # Invarian: "unknown" tidak pernah berarti aman. Binding yang belum
+    # mapan bisa berskor rendah (mis. young_binding = 15) dan jatuh ke
+    # proceed — itu mengubah ketiadaan bukti menjadi kepercayaan, dan
+    # penyerang mengendalikan jalurnya: cukup pindai stikernya sendiri
+    # sekali agar skornya turun dari 35 ke 15.
+    #
+    # Dijaga struktural di sini, bukan lewat penyetelan bobot, supaya
+    # sinyal baru mana pun tidak bisa membuka lagi celah yang sama.
+    if status == UNKNOWN and action == PROCEED:
+        action = WARN
+
     return Verdict(
         status=status,
-        action=_action_for(score),
+        action=action,
         risk_score=score,
         reasons=reasons,
         signals=signals,
