@@ -58,6 +58,9 @@ class ClientRegistry:
     """Daftar PJP yang boleh memanggil API."""
 
     def __init__(self, spec: str = None, auth_setting: str = None):
+        # Sama seperti RateLimiter: yang disodorkan eksplisit menang atas
+        # env, supaya lingkungan yang kebetulan memasang QSHIELD_AUTH=off
+        # tidak diam-diam mematikan registry yang sengaja dibangun aktif.
         if spec is None:
             spec = os.environ.get("QSHIELD_API_KEYS", "")
         if auth_setting is None:

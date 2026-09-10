@@ -55,9 +55,21 @@ def _env_int(nama: str, bawaan: int) -> int:
 class RateLimiter:
     """Jendela geser sederhana, aman dipakai lintas thread."""
 
-    def __init__(self, max_requests: int = None, window_seconds: int = None):
-        setelan = os.environ.get("QSHIELD_RATE_LIMIT", "").strip().lower()
-        self.disabled = setelan in MATIKAN
+    def __init__(self, max_requests: int = None, window_seconds: int = None,
+                 disabled: bool = None):
+        # Argumen eksplisit MENGALAHKAN env. Tanpa aturan ini, kode yang
+        # membuat limiter secara programatik diam-diam kehilangan seluruh
+        # pembatasan begitu QSHIELD_RATE_LIMIT=off terpasang di
+        # lingkungannya — kuota yang diminta secara eksplisit justru
+        # yang paling tidak boleh diabaikan diam-diam.
+        if disabled is not None:
+            self.disabled = disabled
+        elif max_requests is not None:
+            self.disabled = False
+        else:
+            setelan = os.environ.get("QSHIELD_RATE_LIMIT", "").strip().lower()
+            self.disabled = setelan in MATIKAN
+
         self.max_requests = max_requests or _env_int(
             "QSHIELD_RATE_LIMIT", DEFAULT_MAX_REQUESTS)
         self.window = window_seconds or _env_int(

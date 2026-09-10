@@ -6,6 +6,7 @@ beserta koordinat, lalu mengembalikan verdict dengan alasan yang
 bisa dibaca manusia.
 """
 
+import json
 import os
 import time
 from typing import Literal, Optional
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import audit
 from . import auth
+from . import config
 from . import behavior as bh
 from . import binding as bd
 from . import emvco
@@ -59,7 +61,17 @@ app.add_middleware(
 
 limiter = RateLimiter()
 clients = auth.ClientRegistry()
-store = Store("qshield.db")
+store = Store(os.environ.get("QSHIELD_DB", "qshield.db"))
+
+# Sakelar yang dipasang untuk gladi bersih lalu lupa dicabut adalah cara
+# paling umum sebuah sistem berangkat ke produksi dalam keadaan terbuka.
+# Karena itu setiap lapis yang sedang mati diteriakkan saat start, bukan
+# didiamkan.
+for _tingkat, _pesan in config.warnings():
+    if _tingkat == "BAHAYA":
+        audit.get_logger().warning(
+            json.dumps({"event": "config_warning", "level": _tingkat,
+                        "message": _pesan}, ensure_ascii=False))
 
 VERIFY_PATH = "/api/v1/verify"
 

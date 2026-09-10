@@ -154,6 +154,29 @@ def _r2():
     return f"{ip} -> {kunci} (hash terpotong, tidak bisa dibalik ke IP)"
 
 
+@cek("Kuota eksplisit tidak bisa dimatikan diam-diam oleh env")
+def _r4():
+    lama = os.environ.get("QSHIELD_RATE_LIMIT")
+    os.environ["QSHIELD_RATE_LIMIT"] = "off"
+    try:
+        # Dibuat dengan kuota eksplisit: env tidak boleh mengalahkannya.
+        rl = RateLimiter(max_requests=3, window_seconds=60)
+        assert not rl.disabled, (
+            "QSHIELD_RATE_LIMIT=off mematikan limiter yang dibuat eksplisit"
+        )
+        kode = [rl.check("k")[0] for _ in range(5)]
+        assert kode.count(True) == 3, f"lolos {kode.count(True)}, harusnya 3"
+
+        # Tanpa argumen, env tetap berlaku.
+        assert RateLimiter().disabled, "env tidak lagi dihormati"
+    finally:
+        if lama is None:
+            os.environ.pop("QSHIELD_RATE_LIMIT", None)
+        else:
+            os.environ["QSHIELD_RATE_LIMIT"] = lama
+    return "argumen eksplisit menang atas env; tanpa argumen env berlaku"
+
+
 @cek("Rate limit bisa dimatikan untuk demo ber-NAT")
 def _r3():
     lama = os.environ.get("QSHIELD_RATE_LIMIT")
