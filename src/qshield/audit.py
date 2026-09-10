@@ -60,6 +60,7 @@ def record_verdict(
     processing_ms,
     accuracy_m=None,
     merchant_name=None,
+    location_source="live",
 ) -> dict:
     """Tulis satu baris audit. Mengembalikan dict yang ditulis (untuk test)."""
     from . import binding as bd
@@ -80,6 +81,10 @@ def record_verdict(
         "signals": verdict.signals,
         "layers": layers,
         "accuracy_m": round(accuracy_m) if accuracy_m is not None else None,
+        # Ikut dicatat supaya jejak audit bisa membedakan putusan dari
+        # GPS langsung dan dari rekaman — tanpa ini, log demo dan log
+        # sungguhan tidak bisa dipisahkan setelah acara.
+        "location_source": location_source,
         "processing_ms": processing_ms,
     }
     get_logger().info(json.dumps(entri, ensure_ascii=False))

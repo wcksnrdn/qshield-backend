@@ -30,6 +30,7 @@ python tests/test_geo.py
 python tests/test_binding.py
 python tests/test_invariants.py               # kunci regresi kedelapan invarian
 python tests/test_adversarial.py              # 13 skenario dari sisi penyerang
+python tests/test_hardening.py                # validasi input, rate limit, audit
 PYTHONPATH=scripts python tests/test_api.py   # test_api.py mengimpor scripts/seed.py
 
 python scripts/calibrate_geo.py               # kalibrasi presisi geohash
@@ -48,10 +49,13 @@ src/qshield/     package utama — import sebagai `qshield` setelah `pip install
   binding.py       Layer 1 — konsensus lokasi, plus aturan komposisi
   behavior.py      Layer 2 — sinyal struktural & perilaku artefak QR
   store.py         persistensi SQLite
+  limits.py        pembatasan laju (memori, tanpa menyimpan IP)
+  audit.py         jejak audit terstruktur tanpa PII
   api.py           endpoint FastAPI
 scripts/         skrip yang dijalankan langsung, bukan bagian dari package
   seed.py             isi data demo, cetak QR asli & palsu
   make_qr.py          cetak prop QR + verifikasi keterbacaan (OpenCV)
+  venue_fixture.py    rekam koordinat venue, putar ulang naskah demo
   calibrate_geo.py    kalibrasi presisi geohash
   calibrate_layer2.py kalibrasi konstanta Layer 2
 tests/           test_*.py — dijalankan langsung (bukan lewat pytest)
@@ -101,6 +105,47 @@ python scripts/make_qr.py --calibrate         # sapu ulang parameter cetak
 Mencetak empat skenario ke `props/` lalu memverifikasi tiap berkas lewat
 OpenCV dalam sembilan kondisi — diperkecil, diburamkan, dimiringkan,
 diredupkan, diberi derau. Jangan cetak apa pun yang belum berstatus `SIAP`.
+
+## Jalur cadangan demo (GPS indoor)
+
+GPS di dalam gedung kerap melaporkan akurasi >100 m, dan invarian §6 akan
+menolak memberi putusan — sistemnya benar, tapi demonya mati. Siapkan
+rekamannya **sebelum** hari-H, jangan panik di lokasi.
+
+```bash
+# PAGI, DI LUAR GEDUNG, berdiri persis di titik demo
+python scripts/venue_fixture.py record -6.9147 107.6098 --accuracy 8
+
+# seed dan prop pakai koordinat yang SAMA
+python scripts/seed.py    $(python scripts/venue_fixture.py coords)
+python scripts/make_qr.py $(python scripts/venue_fixture.py coords)
+
+# gladi bersih / fallback saat GPS ruangan payah
+python scripts/venue_fixture.py replay
+```
+
+Yang diputar ulang ditandai eksplisit sebagai replay — di permintaan
+(`location_source`), di tanggapan, di alasan paling depan, dan di jejak
+audit. Penilaiannya tidak berubah sedikit pun, dan mode ini tidak bisa
+dipakai membobol invarian akurasi GPS (diuji di `test_hardening.py`).
+Sampaikan terus terang ke juri: menolak memberi putusan saat sinyal buruk
+memang fitur, bukan bug.
+
+## Konfigurasi
+
+Semua lewat env var, semuanya punya nilai bawaan yang aman:
+
+| Variabel | Bawaan | Guna |
+|---|---|---|
+| `QSHIELD_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | daftar origin CORS |
+| `QSHIELD_RATE_LIMIT` | `60` | permintaan per jendela; `off` mematikan |
+| `QSHIELD_RATE_WINDOW` | `60` | panjang jendela (detik) |
+| `QSHIELD_LOG_LEVEL` | `INFO` | level audit log |
+| `QSHIELD_VENUE_FIXTURE` | `venue.json` | berkas rekaman koordinat |
+
+Di WiFi acara yang ber-NAT seluruh ruangan terlihat sebagai satu alamat —
+kalau rate limit mulai menolak permintaan sah saat gladi bersih, jalankan
+dengan `QSHIELD_RATE_LIMIT=off`.
 
 ## Endpoint
 

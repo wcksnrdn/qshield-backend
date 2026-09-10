@@ -248,6 +248,71 @@ def _a2():
     return f"tercatat: {', '.join(sorted(set(peristiwa)))}"
 
 
+# --- Mode replay ---------------------------------------------------
+
+@cek("Mode replay tidak mengubah penilaian sedikit pun")
+def _m1():
+    c = siapkan()
+    live = kirim(c, device_anon_id="banding-live-01", accuracy_m=8).json()
+    rep = kirim(c, device_anon_id="banding-replay1", accuracy_m=8,
+                location_source="replay").json()
+
+    assert rep["verdict"] == live["verdict"], "replay mengubah verdict"
+    assert rep["action"] == live["action"], "replay mengubah tier friksi"
+    assert rep["risk_score"] == live["risk_score"], "replay mengubah skor"
+    assert rep["layers"] == live["layers"], "replay mengubah rincian layer"
+    return f"live dan replay sama-sama {live['verdict']}/{live['action']}"
+
+
+@cek("Mode replay tidak bisa membobol invarian akurasi GPS")
+def _m2():
+    c = siapkan()
+    d = kirim(c, device_anon_id="banding-replay2", accuracy_m=250,
+              location_source="replay").json()
+    assert d["verdict"] != "verified", "replay memaksa verified dari GPS buruk"
+    assert d["action"] != "proceed", "replay memaksa proceed dari GPS buruk"
+    assert any("kurasi" in r for r in d["reasons"])
+    return "akurasi 250 m tetap ditolak walau ditandai replay"
+
+
+@cek("Replay selalu mengaku dirinya replay")
+def _m3():
+    c = siapkan()
+    log = audit.get_logger()
+    tangkap = io.StringIO()
+    h = logging.StreamHandler(tangkap)
+    h.setFormatter(logging.Formatter("%(message)s"))
+    log.addHandler(h)
+    try:
+        d = kirim(c, device_anon_id="banding-replay3",
+                  location_source="replay").json()
+    finally:
+        log.removeHandler(h)
+
+    assert d["location_source"] == "replay", "tanggapan tidak menandai replay"
+    assert "replayed_location" in d["signals"], "sinyal replay tidak muncul"
+    assert any("diputar ulang" in r for r in d["reasons"]), (
+        "tidak ada alasan yang bisa dibaca manusia soal replay")
+    assert d["reasons"][0].startswith("Koordinat diputar ulang"), (
+        "penanda replay tidak di posisi paling depan")
+
+    baris = [b for b in tangkap.getvalue().strip().split("\n") if b]
+    entri = json.loads(baris[0])
+    assert entri["location_source"] == "replay", "audit tidak mencatat replay"
+    return "ditandai di tanggapan, sinyal, alasan terdepan, dan jejak audit"
+
+
+@cek("Default tetap live — replay tidak pernah tidak sengaja aktif")
+def _m4():
+    c = siapkan()
+    d = kirim(c, device_anon_id="banding-default").json()
+    assert d["location_source"] == "live", f"default = {d['location_source']}"
+    assert "replayed_location" not in d["signals"]
+    r = kirim(c, device_anon_id="banding-ngaco", location_source="palsu")
+    assert r.status_code == 422, "nilai location_source sembarang diterima"
+    return "default 'live'; nilai di luar live/replay ditolak"
+
+
 # --- Laporan -------------------------------------------------------
 
 print("=" * 70)

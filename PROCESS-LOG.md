@@ -353,6 +353,94 @@ sedangkan pemindai HP tinggal digeser penggunanya.
 
 ---
 
+## Keputusan 15 — Pengerasan diukur dulu, baru ditambal
+
+Permukaan serangan diperiksa sebelum satu baris pun ditulis. Yang
+ditemukan, dan semuanya nyata:
+
+| Titik | Kondisi awal |
+|---|---|
+| panjang payload | tanpa batas — 16 MB menghabiskan ~1,9 detik CPU sebelum ditolak |
+| `accuracy_m` | tanpa batas atas, `1e300` diterima |
+| `device_anon_id` | menerima null byte, path traversal, string SQL |
+| CORS | `allow_origins=["*"]` |
+| header keamanan | tidak ada satu pun |
+| rate limit | tidak ada; 200 permintaan beruntun semuanya lolos |
+
+Batas payload **1024 karakter** punya dasar ukur, bukan tebakan: QR demo
+148-158 karakter, QR yang dimuati semaksimal mungkin tapi masih sah 503.
+Badan permintaan dipotong lebih awal lagi di 8 KB pada lapisan HTTP —
+payload 8 MB kini ditolak dalam 43 ms, bukan 1.890 ms.
+
+**Rate limiting adalah utang dari Keputusan 13.** Waktu sinyal "lonjakan
+pemindaian" dibuang, alasannya: volume permintaan itu urusan kontrol
+akses, bukan skor risiko. Berkas `limits.py` yang membayar utang itu.
+
+Penghitungnya dikunci pada hash terpotong dari alamat IP, hanya hidup di
+memori proses, dan tidak pernah masuk basis data maupun log. Invarian §8
+berlaku untuk seluruh sistem, bukan cuma untuk tabel.
+
+Batasan yang diakui: penguncian per-IP itu kasar. Di balik NAT — persis
+situasi WiFi acara — seluruh ruangan terlihat sebagai satu alamat. Karena
+itu bawaannya longgar (60/menit) dan ada `QSHIELD_RATE_LIMIT=off`.
+Menolak permintaan juri di tengah demo jauh lebih mahal daripada
+melayani beberapa probe berlebih.
+
+---
+
+## Keputusan 16 — Audit mencatat putusan, bukan siapa yang memindai
+
+Satu baris JSON per putusan. Yang dicatat: `nmid`, nama merchant,
+`geohash_7`, verdict, action, skor, sinyal, rincian layer, `accuracy_m`,
+`location_source`, `processing_ms`.
+
+Yang **tidak pernah** dicatat, beserta alasannya:
+
+| Tidak dicatat | Alasan |
+|---|---|
+| `device_anon_id` | dipakai menghitung pengamat unik (Keputusan 6); menuliskannya ke log membangun jejak yang justru dihindari skemanya |
+| koordinat presisi | bisa merekonstruksi posisi pemindai |
+| alamat IP | lihat `limits.py` — tidak pernah keluar dari memori |
+| payload mentah | memuat identitas merchant lengkap, tidak dibutuhkan untuk audit putusan |
+
+Lokasi dicatat sebagai sel geohash presisi 7 (~152 m): cukup untuk
+menelusuri jangkar mana yang terlibat, terlalu kasar untuk menunjukkan
+seseorang berdiri di mana.
+
+Diuji eksplisit di `test_hardening.py` — skema yang bersih tidak ada
+gunanya kalau log-nya bocor.
+
+---
+
+## Keputusan 17 — Jalur cadangan demo mengaku dirinya replay
+
+Ini bukan bagian dari produk, tapi ini yang menentukan apakah juri
+melihat produknya bekerja.
+
+Jangkar Q-Shield terikat koordinat spesifik, jadi seluruh seed lama tidak
+relevan begitu pindah venue. Lebih buruk lagi, GPS di dalam gedung kerap
+melaporkan akurasi >100 m — dan invarian §6 akan menolak memberi putusan.
+Sistemnya benar, tapi demonya mati.
+
+`scripts/venue_fixture.py` merekam koordinat di luar gedung pagi hari-H,
+lalu memutar ulang naskah demo dari rekaman itu. Perintah `record`
+**menolak** menyimpan rekaman dengan akurasi >100 m — rekaman seperti itu
+tidak akan berguna, dan lebih baik ketahuan pagi-pagi daripada di depan
+juri.
+
+**Yang diputar ulang ditandai eksplisit sebagai replay** — di permintaan
+(`location_source`), di tanggapan, di alasan paling depan, dan di jejak
+audit. Penilaiannya tidak berubah sedikit pun, dan mode ini tidak bisa
+dipakai membobol invarian akurasi GPS. Keduanya diuji.
+
+Alasannya bukan teknis melainkan strategis: replay yang disamarkan seolah
+live adalah kebohongan kecil yang akan dicium juri, dan sekali ketahuan,
+seluruh klaim lain ikut diragukan. Mengakuinya justru menguatkan —
+menolak memberi putusan saat sinyal buruk memang fitur, bukan bug, dan
+demo yang jujur soal batasnya adalah demo yang argumennya konsisten.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -364,6 +452,8 @@ test_invariants.py   satu pemeriksaan per invarian, keluar bukan-nol
                      kalau ada yang jebol
 test_adversarial.py  13 skenario dari sisi penyerang, termasuk tiga
                      batasan yang diakui — diuji agar sistem tetap jujur
+test_hardening.py    15 pemeriksaan: validasi input, rate limit, header,
+                     audit tanpa PII, dan mode replay
 ```
 
 `test_invariants.py` bukan test fitur. Tugasnya satu: memastikan tidak ada

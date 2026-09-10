@@ -9,3 +9,6 @@ qshield.db
 
 # Prop QR hasil scripts/make_qr.py
 props/
+
+# Rekaman koordinat venue — spesifik per lokasi acara
+venue.json
