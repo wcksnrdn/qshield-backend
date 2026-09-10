@@ -109,7 +109,10 @@ def cmd_replay(argv):
     import tempfile
     from datetime import timedelta
 
+    # Gladi bersih dijalankan di dalam proses, bukan lewat jaringan:
+    # pembatas laju dan autentikasi klien tidak relevan di sini.
     os.environ.setdefault("QSHIELD_RATE_LIMIT", "off")
+    os.environ.setdefault("QSHIELD_AUTH", "off")
     from fastapi.testclient import TestClient
 
     from qshield import api, emvco

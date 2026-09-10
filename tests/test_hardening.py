@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-from qshield import api, audit, emvco
+from qshield import api, audit, auth, emvco
 from qshield.limits import RateLimiter
 from qshield.store import Store
 
@@ -44,7 +44,14 @@ def cek(nama):
     return deco
 
 
-def siapkan(limiter=None):
+# Kunci demo, dibuat sekali per proses. Nilai mentahnya tidak pernah
+# ditulis ke berkas mana pun.
+KUNCI_UJI = auth.new_key()
+REGISTRY_UJI = auth.ClientRegistry(
+    spec=f"pjp-alpha:{auth.hash_key(KUNCI_UJI)}", auth_setting="")
+
+
+def siapkan(limiter=None, clients=None):
     api.store = Store(os.path.join(tempfile.mkdtemp(), "hard.db"))
     api.store.seed_binding(
         nmid=NMID, lat=LAT, lng=LNG, merchant_name="WARUNG BU SRI",
@@ -52,6 +59,9 @@ def siapkan(limiter=None):
         first_seen=NOW - timedelta(days=180), last_seen=NOW - timedelta(hours=6),
     )
     api.limiter = limiter or RateLimiter(max_requests=10_000, window_seconds=60)
+    # Sebagian besar pemeriksaan di berkas ini bukan tentang autentikasi,
+    # jadi bawaannya dimatikan; yang mengujinya menyodorkan registry sendiri.
+    api.clients = clients or auth.ClientRegistry(spec="", auth_setting="off")
     return TestClient(api.app)
 
 
@@ -313,6 +323,133 @@ def _m4():
     r = kirim(c, device_anon_id="banding-ngaco", location_source="palsu")
     assert r.status_code == 422, "nilai location_source sembarang diterima"
     return "default 'live'; nilai di luar live/replay ditolak"
+
+
+# --- Autentikasi klien ---------------------------------------------
+
+@cek("Endpoint verifikasi menolak klien tanpa kunci")
+def _t1():
+    c = siapkan(clients=REGISTRY_UJI)
+    for label, header in (("tanpa kunci", {}),
+                          ("kunci ngawur", {auth.API_KEY_HEADER: "tebakan"}),
+                          ("kunci hampir benar",
+                           {auth.API_KEY_HEADER: KUNCI_UJI[:-1] + "X"})):
+        r = c.post("/api/v1/verify", json={
+            "payload": qr(), "lat": LAT, "lng": LNG,
+            "device_anon_id": "demo-device-0001"}, headers=header)
+        assert r.status_code == 401, f"{label} -> HTTP {r.status_code}"
+
+    r = c.post("/api/v1/verify", json={
+        "payload": qr(), "lat": LAT, "lng": LNG,
+        "device_anon_id": "demo-device-0001"},
+        headers={auth.API_KEY_HEADER: KUNCI_UJI})
+    assert r.status_code == 200, f"kunci benar ditolak: {r.status_code}"
+    return "tanpa kunci / ngawur / hampir benar semua 401; yang benar lolos"
+
+
+@cek("Tanpa konfigurasi, sistem gagal TERTUTUP")
+def _t2():
+    c = siapkan(clients=auth.ClientRegistry(spec="", auth_setting=""))
+    r = c.post("/api/v1/verify", json={
+        "payload": qr(), "lat": LAT, "lng": LNG,
+        "device_anon_id": "demo-device-0001"},
+        headers={auth.API_KEY_HEADER: KUNCI_UJI})
+    assert r.status_code == 503, (
+        f"HTTP {r.status_code} — ketiadaan konfigurasi diperlakukan sebagai izin"
+    )
+    # Health tetap hidup supaya monitoring tahu servisnya menyala.
+    assert c.get("/api/v1/health").status_code == 200
+    return "503, bukan 200 — ketiadaan konfigurasi bukan izin"
+
+
+@cek("Kunci API tidak pernah masuk log, bahkan saat gagal")
+def _t3():
+    c = siapkan(clients=REGISTRY_UJI)
+    bocoran = "KUNCI-RAHASIA-JANGAN-BOCOR"
+    log = audit.get_logger()
+    tangkap = io.StringIO()
+    h = logging.StreamHandler(tangkap)
+    h.setFormatter(logging.Formatter("%(message)s"))
+    log.addHandler(h)
+    try:
+        for kunci in (bocoran, KUNCI_UJI):
+            c.post("/api/v1/verify", json={
+                "payload": qr(), "lat": LAT, "lng": LNG,
+                "device_anon_id": "demo-device-0001"},
+                headers={auth.API_KEY_HEADER: kunci})
+    finally:
+        log.removeHandler(h)
+
+    isi = tangkap.getvalue()
+    assert bocoran not in isi, "kunci yang salah ikut tercatat"
+    assert KUNCI_UJI not in isi, "kunci yang benar ikut tercatat"
+
+    entri = [json.loads(b) for b in isi.strip().split("\n") if b]
+    ditolak = [e for e in entri if e.get("event") == "rejected"]
+    lolos = [e for e in entri if e.get("event") == "verify"]
+    assert ditolak and ditolak[0]["reason"] == "auth_failed"
+    assert lolos and lolos[0]["client"] == "pjp-alpha", (
+        "client_id tidak tercatat di jejak audit"
+    )
+    return "kunci tidak bocor; client_id tercatat sebagai 'pjp-alpha'"
+
+
+@cek("Kunci disimpan sebagai hash, bukan teks asli")
+def _t4():
+    reg = auth.ClientRegistry(
+        spec=f"pjp-beta:{auth.hash_key(KUNCI_UJI)}", auth_setting="")
+    tersimpan = json.dumps(reg._clients)
+    assert KUNCI_UJI not in tersimpan, "kunci mentah tersimpan di registry"
+    assert reg.authenticate(KUNCI_UJI) == "pjp-beta"
+    assert reg.authenticate(KUNCI_UJI + "x") is None
+    assert reg.authenticate("") is None
+    assert reg.authenticate(None) is None
+    return "registry hanya memegang sha256; kunci mentah tidak ada di memori"
+
+
+@cek("client_id tidak pernah masuk tabel basis data")
+def _t5():
+    c = siapkan(clients=REGISTRY_UJI)
+    c.post("/api/v1/verify", json={
+        "payload": qr(), "lat": LAT, "lng": LNG,
+        "device_anon_id": "demo-device-0001"},
+        headers={auth.API_KEY_HEADER: KUNCI_UJI})
+
+    tabel = [r["name"] for r in api.store.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'")]
+    for t in tabel:
+        kolom = [k["name"].lower() for k in
+                 api.store.conn.execute(f"PRAGMA table_info({t})")]
+        for terlarang in ("client", "api_key", "pjp"):
+            assert not any(terlarang in k for k in kolom), (
+                f"{t} punya kolom '{terlarang}' — client_id merembes ke skema"
+            )
+    return f"{len(tabel)} tabel diperiksa; client_id hanya hidup di jejak audit"
+
+
+@cek("Kuota dihitung per klien, bukan per alamat IP")
+def _t6():
+    # Ini yang menutup batasan R8: di balik NAT seluruh ruangan berbagi
+    # satu alamat, jadi kuota per-IP menghukum pengguna yang tidak salah.
+    c = siapkan(limiter=RateLimiter(max_requests=5, window_seconds=60),
+                clients=REGISTRY_UJI)
+    kode = []
+    for i in range(8):
+        r = c.post("/api/v1/verify", json={
+            "payload": qr(), "lat": LAT, "lng": LNG,
+            "device_anon_id": f"kuota-{i:04d}"},
+            headers={auth.API_KEY_HEADER: KUNCI_UJI})
+        kode.append(r.status_code)
+    assert kode.count(200) == 5 and kode.count(429) == 3, f"pola {kode}"
+
+    # Semua permintaan datang dari alamat yang sama (TestClient), jadi
+    # kalau kuotanya masih per-IP, klien kedua ikut terkena. Buktikan
+    # kuncinya memang client_id.
+    kunci_dipakai = [k for k in api.limiter._hits if k.startswith("client:")]
+    assert kunci_dipakai == ["client:pjp-alpha"], (
+        f"kuota tidak dikunci ke client_id: {list(api.limiter._hits)}"
+    )
+    return "kuota dikunci ke 'client:pjp-alpha', bukan alamat IP (menutup R8)"
 
 
 # --- Konkurensi ----------------------------------------------------

@@ -17,6 +17,7 @@ Apa yang TIDAK PERNAH dicatat, dan mengapa:
                    justru dihindari skemanya
   lat/lng presisi  koordinat mentah bisa merekonstruksi posisi pemindai
   alamat IP        lihat limits.py — tidak pernah keluar dari memori
+  kunci API        tidak pernah dicatat, bahkan saat autentikasi gagal
   payload mentah   memuat identitas merchant lengkap dan tidak
                    dibutuhkan untuk audit putusan
 
@@ -61,6 +62,7 @@ def record_verdict(
     accuracy_m=None,
     merchant_name=None,
     location_source="live",
+    client_id=None,
 ) -> dict:
     """Tulis satu baris audit. Mengembalikan dict yang ditulis (untuk test)."""
     from . import binding as bd
@@ -85,6 +87,10 @@ def record_verdict(
         # GPS langsung dan dari rekaman — tanpa ini, log demo dan log
         # sungguhan tidak bisa dipisahkan setelah acara.
         "location_source": location_source,
+        # PJP yang meminta putusan — lembaga, bukan orang. Ini yang
+        # menjawab "putusan ini diminta siapa" saat diaudit, dan tidak
+        # pernah masuk tabel bindings maupun observations.
+        "client": client_id,
         "processing_ms": processing_ms,
     }
     get_logger().info(json.dumps(entri, ensure_ascii=False))

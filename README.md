@@ -30,7 +30,7 @@ python tests/test_geo.py
 python tests/test_binding.py
 python tests/test_invariants.py               # kunci regresi kedelapan invarian
 python tests/test_adversarial.py              # 13 skenario dari sisi penyerang
-python tests/test_hardening.py                # validasi input, rate limit, audit
+python tests/test_hardening.py                # input, auth, rate limit, audit, konkurensi
 PYTHONPATH=scripts python tests/test_api.py   # test_api.py mengimpor scripts/seed.py
 
 python scripts/calibrate_geo.py               # kalibrasi presisi geohash
@@ -49,6 +49,7 @@ src/qshield/     package utama — import sebagai `qshield` setelah `pip install
   binding.py       Layer 1 — konsensus lokasi, plus aturan komposisi
   behavior.py      Layer 2 — sinyal struktural & perilaku artefak QR
   store.py         persistensi SQLite
+  auth.py          autentikasi klien PJP (kunci disimpan sebagai hash)
   limits.py        pembatasan laju (memori, tanpa menyimpan IP)
   audit.py         jejak audit terstruktur tanpa PII
   api.py           endpoint FastAPI
@@ -56,6 +57,7 @@ scripts/         skrip yang dijalankan langsung, bukan bagian dari package
   seed.py             isi data demo, cetak QR asli & palsu
   make_qr.py          cetak prop QR + verifikasi keterbacaan (OpenCV)
   venue_fixture.py    rekam koordinat venue, putar ulang naskah demo
+  make_apikey.py      terbitkan kunci API untuk satu PJP
   calibrate_geo.py    kalibrasi presisi geohash
   calibrate_layer2.py kalibrasi konstanta Layer 2
 tests/           test_*.py — dijalankan langsung (bukan lewat pytest)
@@ -137,6 +139,8 @@ Semua lewat env var, semuanya punya nilai bawaan yang aman:
 
 | Variabel | Bawaan | Guna |
 |---|---|---|
+| `QSHIELD_API_KEYS` | *(kosong)* | `client_id:sha256` dipisah koma; kosong = endpoint verifikasi menolak melayani |
+| `QSHIELD_AUTH` | *(kosong)* | `off` mematikan autentikasi, untuk demo lokal |
 | `QSHIELD_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | daftar origin CORS |
 | `QSHIELD_RATE_LIMIT` | `60` | permintaan per jendela; `off` mematikan |
 | `QSHIELD_RATE_WINDOW` | `60` | panjang jendela (detik) |
@@ -146,6 +150,36 @@ Semua lewat env var, semuanya punya nilai bawaan yang aman:
 Di WiFi acara yang ber-NAT seluruh ruangan terlihat sebagai satu alamat —
 kalau rate limit mulai menolak permintaan sah saat gladi bersih, jalankan
 dengan `QSHIELD_RATE_LIMIT=off`.
+
+## Autentikasi klien
+
+Klien Q-Shield adalah **PJP**, bukan orang. Satu kunci mewakili satu
+penyelenggara yang memanggil API sebelum PIN entry.
+
+```bash
+python scripts/make_apikey.py pjp-alpha     # cetak kunci + baris env
+export QSHIELD_API_KEYS="pjp-alpha:<sha256>"
+```
+
+Klien menyertakannya sebagai header:
+
+```
+X-API-Key: <kunci mentah>
+```
+
+Tiga sifat yang disengaja:
+
+- **Gagal tertutup.** Kalau `QSHIELD_API_KEYS` kosong dan `QSHIELD_AUTH`
+  tidak disetel `off`, endpoint verifikasi mengembalikan `503`, bukan
+  melayani tanpa autentikasi. Ketiadaan konfigurasi bukan izin — logika
+  yang sama dengan invarian §2.
+- **Kunci disimpan sebagai hash.** Konfigurasi yang bocor tidak langsung
+  memberi penyerang kunci yang bisa dipakai, dan kunci mentah tidak
+  pernah masuk log — bahkan saat autentikasi gagal.
+- **Kuota dihitung per klien, bukan per IP.** Ini yang menutup batasan R8:
+  di balik NAT seluruh ruangan berbagi satu alamat.
+
+Untuk demo lokal jalankan dengan `QSHIELD_AUTH=off`.
 
 ## Endpoint
 

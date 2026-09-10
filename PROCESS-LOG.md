@@ -603,6 +603,47 @@ Dikunci di `test_hardening.py`: tiga pemeriksaan konkurensi.
 
 ---
 
+## Keputusan 22 — Autentikasi klien menutup R9, dan R8 ikut terbawa
+
+R9 ditandai sendiri di threat model sebagai risiko terbuka terbesar:
+tanpa autentikasi, siapa pun bisa mengirim pengamatan, dan basis data
+binding adalah aset A1.
+
+**Klien di sini adalah PJP, bukan orang.** Satu kunci mewakili satu
+penyelenggara yang memanggil Q-Shield sebelum PIN entry. Ini yang
+menjaga invarian §8 tetap utuh: `client_id` mengidentifikasi lembaga,
+dan diuji tidak pernah masuk tabel `bindings` maupun `observations` —
+hanya ke jejak audit, tempat ia memang dibutuhkan untuk menjawab
+"putusan ini diminta siapa".
+
+Tiga sifat yang disengaja:
+
+1. **Gagal tertutup.** Kalau `QSHIELD_API_KEYS` kosong dan `QSHIELD_AUTH`
+   tidak disetel `off`, endpoint verifikasi mengembalikan `503` — bukan
+   melayani tanpa autentikasi. Ketiadaan konfigurasi bukan izin, logika
+   yang persis sama dengan Keputusan 2.
+2. **Kunci disimpan sebagai hash.** Konfigurasi yang bocor tidak langsung
+   memberi kunci yang bisa dipakai. Kunci mentah tidak pernah masuk log,
+   bahkan saat autentikasi gagal — diuji.
+3. **Perbandingan waktu-tetap.** `hmac.compare_digest`, dan seluruh
+   daftar klien ditelusuri sampai habis alih-alih berhenti di kecocokan
+   pertama, supaya lama eksekusinya tidak membocorkan posisi.
+
+**R8 ikut tertutup tanpa pekerjaan tambahan.** Begitu ada identitas
+klien, kuota tidak perlu lagi dikunci ke alamat IP — dan itu persis
+keluhan R8: di balik NAT, seluruh ruangan berbagi satu alamat, sehingga
+kuota per-IP menghukum pengguna yang tidak salah. Sekarang kuncinya
+`client:<client_id>`. Autentikasi harus berjalan di luar pembatas laju
+supaya urutannya benar; susunan middleware ditata ulang untuk itu dan
+alasannya ditulis di tempatnya.
+
+Yang tersisa sebagai risiko terbuka terbesar sekarang **R1 (mock
+location)** — dan itu juga yang menyisakan R10, karena penyerang
+bermodal besar masih bisa memupuk binding dari perangkat yang
+koordinatnya dipalsukan di balik PJP yang sah.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -614,8 +655,9 @@ test_invariants.py   satu pemeriksaan per invarian, keluar bukan-nol
                      kalau ada yang jebol
 test_adversarial.py  15 skenario dari sisi penyerang, termasuk empat
                      batasan yang diakui — diuji agar sistem tetap jujur
-test_hardening.py    18 pemeriksaan: validasi input, rate limit, header,
-                     audit tanpa PII, mode replay, dan konkurensi
+test_hardening.py    24 pemeriksaan: validasi input, autentikasi klien,
+                     rate limit, header, audit tanpa PII, mode replay,
+                     dan konkurensi
 ```
 
 Dokumen ancaman terpisah ada di `THREAT-MODEL.md`.

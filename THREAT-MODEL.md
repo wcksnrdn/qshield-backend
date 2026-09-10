@@ -140,6 +140,9 @@ bukan sekadar gangguan UX.
 
 | # | Ancaman | Aktor | Mitigasi | Bukti |
 |---|---|---|---|---|
+| T25 | Pihak tak dikenal mengirim pengamatan ke API | P2, P3, P5 | Kunci API per PJP; tanpa kunci valid endpoint verifikasi menolak. Gagal tertutup bila belum dikonfigurasi | `test_hardening.py` "menolak klien tanpa kunci"; "gagal TERTUTUP" |
+| T26 | Kunci API bocor lewat log atau konfigurasi | P4 | Kunci disimpan sebagai sha256; kunci mentah tidak pernah dicatat, bahkan saat autentikasi gagal | `test_hardening.py` "tidak pernah masuk log"; "disimpan sebagai hash" |
+| T27 | Kunci ditebak lewat pengukuran waktu | P3 | `hmac.compare_digest`, dan seluruh daftar ditelusuri sampai habis | `auth.ClientRegistry.authenticate` |
 | T19 | SQL injection lewat `device_anon_id` atau payload | P3 | Seluruh query berparameter; `device_anon_id` dibatasi `^[A-Za-z0-9_-]+$` | `test_hardening.py` "charset aman" |
 | T20 | Karakter kendali / null byte menembus parser atau basis data | P3 | `payload` dibatasi ASCII yang bisa dicetak di batas sistem | `test_hardening.py` "Karakter kendali" |
 | T21 | Situs pihak ketiga memanggil API dari browser korban | P3 | CORS dibatasi daftar origin lewat env; tidak lagi `["*"]` | `test_hardening.py` "CORS tidak lagi terbuka" |
@@ -165,9 +168,9 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 | R5 | **Merchant sah pindah lokasi** | Relokasi tidak bisa dibedakan dari swap tanpa konfirmasi | Jalur konfirmasi merchant | Memicu peringatan sekali (diuji) |
 | R6 | **Merchant keliling** | Model jangkar mengasumsikan lokasi tetap | Penandaan khusus saat pendaftaran | Belum ditangani sama sekali |
 | R7 | **Sidik jari encoding belum tervalidasi lapangan** | Belum punya korpus payload QRIS asli dari berbagai acquirer | Kumpulkan korpus | Bobot kecil dan dibatasi bersama; tidak pernah bisa menggerakkan tier sendirian |
-| R8 | **Rate limit per-IP kasar di balik NAT** | Satu alamat mewakili banyak perangkat | Rate limit per `device_anon_id` sebagai lapis tambahan | Bawaan longgar; bisa dimatikan untuk demo |
-| R10 | **Penyerang yang menang balapan cold start** | **Dimitigasi sebagian.** `ADJACENT_MIN_RATIO` = 0,10 menuntut basis pengamat sebanding sebelum pengecualian koeksistensi berlaku; serangan modal minimum (3 device) tidak lagi lolos. Penyerang yang mengeluarkan >5 device masih lolos | Penutupan penuh lewat R1 atau R9 | Sedang — biaya penyerang naik, celah belum tertutup |
-| R9 | **Belum ada autentikasi klien** | PoC; endpoint terbuka | API key / mTLS per PJP sebelum produksi | Siapa pun bisa mengirim pengamatan — jalur pencemaran basis data yang paling lebar saat ini |
+| R8 | ~~Rate limit per-IP kasar di balik NAT~~ **DITUTUP** | — | Kuota kini dikunci ke `client_id` hasil autentikasi, bukan alamat | Klien di balik NAT tidak lagi saling menghabiskan kuota |
+| R10 | **Penyerang yang menang balapan cold start** | **Dimitigasi sebagian.** `ADJACENT_MIN_RATIO` = 0,10 menuntut basis pengamat sebanding sebelum pengecualian koeksistensi berlaku; serangan modal minimum (3 device) tidak lagi lolos. Penyerang yang mengeluarkan >5 device masih lolos | Penutupan penuh lewat R1; R9 sudah ditutup dan mempersempit populasi penyerang jadi PJP terdaftar | Sedang — biaya penyerang naik, celah belum tertutup |
+| R9 | ~~Belum ada autentikasi klien~~ **DITUTUP** | — | Kunci API per PJP, disimpan sebagai hash, gagal tertutup. mTLS menyusul menuju produksi | Endpoint verifikasi hanya melayani PJP terdaftar |
 
 ### Proposal untuk R10 — belum diterapkan, butuh keputusan tim
 
@@ -252,13 +255,21 @@ sudah mapan, bukan pada seluruh pemindaian seperti opsi A.
 **menaikkan biaya** penyerang, tidak menutup celahnya. Penyerang yang mau
 mengeluarkan lebih banyak device tetap lolos. Yang berubah adalah
 serangan 3-device yang murah jadi tidak lagi cukup. Penutupan sungguhan
-menuntut R1 (integritas perangkat) atau R9 (autentikasi klien) — dan itu
-memang jawaban yang benar untuk pertanyaan ini.
+menuntut R1 (integritas perangkat). R9 sudah ditutup, dan itu sudah
+mempersempit populasi penyerang jadi pihak yang memegang kunci PJP —
+tapi tidak menghapus ancaman dari perangkat yang koordinatnya dipalsukan
+di balik PJP yang sah.
 
-**R9 adalah risiko terbuka terbesar saat ini** dan sengaja ditaruh
-terakhir agar tidak tenggelam. Rate limiting memperlambat pencemaran
-basis data, tapi tidak menghentikan penyerang yang sabar. Autentikasi
-klien adalah prasyarat produksi, bukan penyempurnaan.
+**R9 dan R8 sudah ditutup** sejak autentikasi klien diterapkan. Yang
+tersisa sebagai risiko terbuka terbesar adalah **R1 (mock location)**,
+karena itulah yang juga menyisakan R10: penyerang bermodal besar masih
+bisa memupuk binding dari perangkat yang koordinatnya dipalsukan.
+Penutupannya menuntut deteksi integritas perangkat, yang memerlukan SDK
+native — di luar jangkauan PoC berbasis web.
+
+Catatan yang tetap berlaku: autentikasi klien memperkecil
+populasi penyerang menjadi PJP terdaftar, tapi tidak menghapus ancaman
+dari perangkat yang koordinatnya dipalsukan di balik PJP yang sah.
 
 ---
 
@@ -303,13 +314,12 @@ pengguna" dijawab dengan menjalankan dua berkas itu.
 
 Diurutkan berdasarkan risiko, bukan usaha.
 
-1. **Autentikasi klien** (R9) — prasyarat, bukan penyempurnaan
-2. **Deteksi integritas perangkat** (R1) — menutup jalur pencemaran terkuat
-3. **Migrasi ke Postgres** — SQLite tidak menangani tulis serentak dari banyak proses
-4. **Jalur konfirmasi merchant** (R5, R6) — dibutuhkan sebelum merchant sah kena imbas
-5. **Kalibrasi lapangan seluruh parameter** — nilai sekarang titik awal demo, bukan hasil data nyata
-6. **Rotasi dan retensi log** — jejak audit tumbuh tanpa batas
-7. **Korpus payload QRIS asli** (R7) — memvalidasi sinyal sidik jari encoding
+1. **Deteksi integritas perangkat** (R1) — kini jalur pencemaran terkuat yang tersisa, dan yang menyisakan R10
+2. **Migrasi ke Postgres** — SQLite tidak menangani tulis serentak dari banyak proses
+3. **Jalur konfirmasi merchant** (R5, R6) — dibutuhkan sebelum merchant sah kena imbas
+4. **Kalibrasi lapangan seluruh parameter** — nilai sekarang titik awal demo, bukan hasil data nyata
+5. **Rotasi dan retensi log** — jejak audit tumbuh tanpa batas
+6. **Korpus payload QRIS asli** (R7) — memvalidasi sinyal sidik jari encoding
 
 ---
 
@@ -317,9 +327,9 @@ Diurutkan berdasarkan risiko, bukan usaha.
 
 Filbert — tiga hal yang paling perlu pandangan kedua:
 
-1. **§6 R9 (belum ada autentikasi klien).** Apakah penilaian dampaknya
-   sudah tepat, dan apakah rate limiting cukup sebagai mitigasi sementara
-   untuk demo?
+1. **§5.5 T25-T27 (autentikasi klien).** Kunci API per PJP sudah
+   diterapkan. Apakah itu cukup untuk pitch, atau mTLS perlu disebut
+   sebagai rencana eksplisit di depan Kaspersky?
 2. **§6 R10.** Pertanyaan ini sudah diuji dan jawabannya: jangkar yang
    korbannya sudah mapan **tidak** bisa dibajak lewat API, tapi penyerang
    yang menang balapan cold start lolos sebagai "merchant bersebelahan".

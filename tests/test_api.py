@@ -2,9 +2,11 @@
 
 import os
 
-# Test ini sengaja membanjiri API, jadi pembatasan laju dimatikan di sini.
-# Pengujian rate limiting-nya sendiri ada di tests/test_hardening.py.
+# Test ini sengaja membanjiri API, jadi pembatasan laju dimatikan di sini,
+# begitu juga autentikasi klien — keduanya diuji tersendiri di
+# tests/test_hardening.py.
 os.environ["QSHIELD_RATE_LIMIT"] = "off"
+os.environ["QSHIELD_AUTH"] = "off"
 
 
 import seed

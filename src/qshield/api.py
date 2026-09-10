@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import audit
+from . import auth
 from . import behavior as bh
 from . import binding as bd
 from . import emvco
@@ -57,28 +58,39 @@ app.add_middleware(
 )
 
 limiter = RateLimiter()
+clients = auth.ClientRegistry()
 store = Store("qshield.db")
 
+VERIFY_PATH = "/api/v1/verify"
 
-@app.middleware("http")
-async def batasi_ukuran_badan(request: Request, call_next):
-    """Tolak badan permintaan kebesaran sebelum dibaca."""
-    panjang = request.headers.get("content-length")
-    if panjang and panjang.isdigit() and int(panjang) > MAX_BODY_BYTES:
-        audit.record_rejected("body_too_large", f"{panjang} bytes")
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Badan permintaan terlalu besar"},
-        )
-    return await call_next(request)
+
+# Middleware terdaftar dari yang PALING DALAM ke yang paling luar:
+# Starlette menjalankan yang terakhir didaftarkan lebih dulu. Urutan
+# eksekusinya jadi:
+#
+#   header_keamanan      pasang header di SEMUA respons, termasuk 401/429
+#   batasi_ukuran_badan  buang yang kebesaran sebelum apa pun membacanya
+#   autentikasi          tetapkan siapa kliennya
+#   batasi_laju          kuota dihitung PER KLIEN, memakai hasil di atas
+#   handler
+#
+# Autentikasi sengaja di luar pembatas laju: tanpa itu kuota terpaksa
+# dikunci ke alamat IP, dan di balik NAT satu alamat mewakili seluruh
+# ruangan (batasan R8).
 
 
 @app.middleware("http")
 async def batasi_laju(request: Request, call_next):
-    """Jendela geser per klien; lihat limits.py untuk catatan privasinya."""
-    if request.url.path == "/api/v1/verify":
-        klien = request.client.host if request.client else ""
-        izin, sisa, reset = limiter.check(limiter.key_for(klien))
+    """Jendela geser. Dikunci per klien kalau autentikasi aktif."""
+    if request.url.path == VERIFY_PATH:
+        client_id = getattr(request.state, "client_id", None)
+        if client_id:
+            kunci = f"client:{client_id}"
+        else:
+            alamat = request.client.host if request.client else ""
+            kunci = limiter.key_for(alamat)
+
+        izin, sisa, reset = limiter.check(kunci)
         if not izin:
             audit.record_rejected("rate_limited", f"reset dalam {reset:.0f}s")
             return JSONResponse(
@@ -94,6 +106,60 @@ async def batasi_laju(request: Request, call_next):
         respons.headers["X-RateLimit-Limit"] = str(limiter.max_requests)
         respons.headers["X-RateLimit-Remaining"] = str(sisa)
         return respons
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def autentikasi(request: Request, call_next):
+    """Hanya PJP terdaftar yang boleh meminta putusan.
+
+    Gagal TERTUTUP: kalau tidak ada kunci terkonfigurasi dan autentikasi
+    tidak dimatikan secara eksplisit, permintaan ditolak. Ketiadaan
+    konfigurasi bukan izin — logika yang sama dengan invarian §2.
+    """
+    request.state.client_id = None
+
+    if request.url.path != VERIFY_PATH:
+        return await call_next(request)
+
+    if clients.disabled:
+        # Dimatikan secara sadar, bukan karena lupa dikonfigurasi.
+        request.state.client_id = "anonymous"
+        return await call_next(request)
+
+    if not clients.configured:
+        audit.record_rejected("auth_not_configured")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Autentikasi belum dikonfigurasi di server"},
+        )
+
+    disodorkan = request.headers.get(auth.API_KEY_HEADER, "")
+    client_id = clients.authenticate(disodorkan)
+    if not client_id:
+        # Alasannya sengaja tidak dibedakan antara "tidak ada kunci" dan
+        # "kunci salah", dan kuncinya sendiri tidak pernah ikut dicatat.
+        audit.record_rejected("auth_failed")
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Kunci API tidak valid atau tidak disertakan"},
+            headers={"WWW-Authenticate": auth.API_KEY_HEADER},
+        )
+
+    request.state.client_id = client_id
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def batasi_ukuran_badan(request: Request, call_next):
+    """Tolak badan permintaan kebesaran sebelum dibaca."""
+    panjang = request.headers.get("content-length")
+    if panjang and panjang.isdigit() and int(panjang) > MAX_BODY_BYTES:
+        audit.record_rejected("body_too_large", f"{panjang} bytes")
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Badan permintaan terlalu besar"},
+        )
     return await call_next(request)
 
 
@@ -192,9 +258,10 @@ def health():
     return {"status": "ok", **store.stats()}
 
 
-@app.post("/api/v1/verify", response_model=VerifyResponse)
-def verify(req: VerifyRequest):
+@app.post(VERIFY_PATH, response_model=VerifyResponse)
+def verify(req: VerifyRequest, request: Request):
     started = time.perf_counter()
+    client_id = getattr(request.state, "client_id", None)
 
     try:
         parsed = emvco.parse(req.payload)
@@ -235,7 +302,7 @@ def verify(req: VerifyRequest):
             low, nmid, req.lat, req.lng,
             {"location": 40, "behavior": struktural.score},
             elapsed, req.accuracy_m, parsed.merchant_name,
-            req.location_source,
+            req.location_source, client_id,
         )
         return VerifyResponse(
             verdict=low.status,
@@ -307,6 +374,7 @@ def verify(req: VerifyRequest):
     audit.record_verdict(
         verdict, nmid, req.lat, req.lng, lapisan, elapsed,
         req.accuracy_m, parsed.merchant_name, req.location_source,
+        client_id,
     )
 
     return VerifyResponse(
