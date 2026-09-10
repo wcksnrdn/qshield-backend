@@ -294,6 +294,43 @@ def _b3():
             f"perlu jalur konfirmasi merchant")
 
 
+@serangan("Mapan lebih dulu di jangkar korban (celah cold start)", ditahan=False)
+def _b4():
+    s, c = fresh_store()
+
+    # Bagian yang DITAHAN: penyerang tidak bisa membangun kemapanan
+    # lewat API. Setiap pemindaian di jangkar mapan menghasilkan
+    # anomaly, dan anomaly tidak pernah dicatat (invarian §3).
+    for i in range(10):
+        scan(c, qr(PENYERANG), device=f"penyerang-{i:04d}")
+    milik_penyerang = s.conn.execute(
+        "SELECT COUNT(*) c FROM bindings WHERE nmid = ?", (PENYERANG,)
+    ).fetchone()["c"]
+    assert milik_penyerang == 0, (
+        f"penyerang berhasil membuat {milik_penyerang} binding lewat API"
+    )
+
+    # Bagian yang BELUM DITAHAN: kalau penyerang sempat mapan lebih dulu
+    # — mis. menempel stiker di merchant baru yang jangkarnya belum
+    # terbentuk, lalu memupuknya dengan 3 device selama 24 jam — maka
+    # begitu merchant sah ikut mapan, keduanya dianggap koeksistensi.
+    s.seed_binding(
+        nmid=PENYERANG, lat=LAT, lng=LNG, merchant_name="WARUNG BU SRI",
+        observer_count=40,
+        first_seen=NOW - timedelta(days=90), last_seen=NOW - timedelta(hours=1),
+    )
+    d = scan(c, qr(PENYERANG), device="penyerang-9999")
+    assert d["verdict"] == "verified", (
+        "prasyarat celah berubah — apakah aturan adjacent_merchant "
+        "sudah diperbaiki? Perbarui catatan di THREAT-MODEL.md R10."
+    )
+    assert "adjacent_merchant" in d["signals"]
+    return ("BELUM DITAHAN: jangkar tidak bisa dibajak lewat API (0 binding "
+            "dari 10 percobaan), tapi penyerang yang mapan LEBIH DULU "
+            "dianggap merchant bersebelahan walau jaraknya 0 m — lihat "
+            "THREAT-MODEL.md R10")
+
+
 # ==================================================================
 # Laporan
 # ==================================================================

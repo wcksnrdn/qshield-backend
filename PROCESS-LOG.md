@@ -441,6 +441,48 @@ demo yang jujur soal batasnya adalah demo yang argumennya konsisten.
 
 ---
 
+## Keputusan 18 — Threat model, dan satu celah yang ditemukan saat menulisnya
+
+`THREAT-MODEL.md` menyusun batas kepercayaan, aset, profil penyerang, dan
+24 ancaman — masing-masing menunjuk ke test yang membuktikan mitigasinya.
+Klaim keamanan tanpa test yang menjalankannya adalah klaim kosong, dan
+kolom terakhir tiap tabel ada supaya itu bisa diperiksa, bukan dipercaya.
+
+Menulisnya menghasilkan satu temuan yang tidak muncul saat menulis fitur.
+Pertanyaan yang semula hanya hendak diajukan ke Filbert — "bisakah
+penyerang membuat NMID-nya sendiri jadi mapan di jangkar korban?" —
+ternyata punya dua jawaban.
+
+**Yang aman:** jangkar yang korbannya sudah mapan tidak bisa dibajak
+lewat API sama sekali. Diuji: 10 pemindaian dari 10 device menghasilkan
+**nol** binding, karena anomali tidak pernah dicatat (Keputusan 7).
+
+**Yang bocor (R10):** kalau penyerang menang balapan *cold start* —
+menempel stiker di merchant baru yang jangkarnya belum terbentuk, lalu
+memupuknya dengan 3 device selama 24 jam — maka begitu merchant sungguhan
+ikut mapan, aturan `adjacent_merchant` (Keputusan 5) menganggap keduanya
+koeksistensi **tanpa memeriksa jarak antar-jangkar**. Jarak 0 m pun
+lolos, dan stiker palsu jadi `verified` permanen.
+
+Alasannya tidak ditambal langsung: perbaikan yang jelas menyentuh
+invarian §7, dan invarian tidak diubah tanpa persetujuan tim. Lebih dari
+itu, perbaikan naif justru berbahaya — galat GPS membuat dua lapak yang
+benar-benar bersebelahan kadang tercatat berjarak <5 m, jadi ambang jarak
+yang terlalu ketat akan menandai ruko sah sebagai serangan, persis yang
+dicegah Keputusan 5.
+
+Dua opsi beserta rekomendasi ada di `THREAT-MODEL.md` §6. Ringkasnya:
+koeksistensi sebaiknya menghasilkan `unknown`, bukan `verified` — kalau
+dua merchant mapan berbagi satu jangkar, sistem memang tidak tahu stiker
+mana yang sedang dilihat, dan mengaku tidak tahu lebih jujur daripada
+menebak. Biayanya harus diukur dulu sebelum diputuskan.
+
+Sementara itu celahnya dikunci sebagai batasan yang diakui di
+`test_adversarial.py`, supaya kalau ada yang memperbaikinya, test-nya
+memberi tahu.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -456,15 +498,17 @@ test_hardening.py    15 pemeriksaan: validasi input, rate limit, header,
                      audit tanpa PII, dan mode replay
 ```
 
+Dokumen ancaman terpisah ada di `THREAT-MODEL.md`.
+
 `test_invariants.py` bukan test fitur. Tugasnya satu: memastikan tidak ada
 perubahan di masa depan yang diam-diam melanggar keputusan yang sudah
 dibayar dengan pengujian empiris. Invarian 1, 5, dan 7 tidak sekadar
 mengunci konstanta tapi menguji ulang buktinya — cakupan presisi 7 versus
 8, rumus bobot, dan koeksistensi ruko pada 5-35 m.
 
-Tiga skenario terakhir di `test_adversarial.py` adalah serangan yang
+Empat skenario terakhir di `test_adversarial.py` adalah serangan yang
 **memang belum ditahan**: spoof koordinat, replay QR dinamis, relokasi
-merchant sah. Untuk itu yang diuji bukan "apakah tertangkap" melainkan
+merchant sah, dan celah cold start R10. Untuk itu yang diuji bukan "apakah tertangkap" melainkan
 "apakah sistem tetap jujur" — batasan yang diketahui tidak boleh diam-diam
 berubah jadi klaim aman, dan itu bentuk kegagalan yang paling berbahaya.
 
