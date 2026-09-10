@@ -1,5 +1,12 @@
 """Test API end-to-end lewat TestClient."""
 
+import os
+
+# Test ini sengaja membanjiri API, jadi pembatasan laju dimatikan di sini.
+# Pengujian rate limiting-nya sendiri ada di tests/test_hardening.py.
+os.environ["QSHIELD_RATE_LIMIT"] = "off"
+
+
 import seed
 from fastapi.testclient import TestClient
 

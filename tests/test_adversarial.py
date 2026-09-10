@@ -15,6 +15,12 @@ jadi klaim aman. Itu bentuk kegagalan yang paling berbahaya.
 """
 
 import os
+
+# Test ini sengaja membanjiri API, jadi pembatasan laju dimatikan di sini.
+# Pengujian rate limiting-nya sendiri ada di tests/test_hardening.py.
+os.environ["QSHIELD_RATE_LIMIT"] = "off"
+
+
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone

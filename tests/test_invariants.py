@@ -12,8 +12,14 @@ bukan-nol kalau ada satu saja yang gagal.
     python tests/test_invariants.py
 """
 
-import math
 import os
+
+# Test ini sengaja membanjiri API, jadi pembatasan laju dimatikan di sini.
+# Pengujian rate limiting-nya sendiri ada di tests/test_hardening.py.
+os.environ["QSHIELD_RATE_LIMIT"] = "off"
+
+
+import math
 import random
 import sys
 import tempfile
