@@ -17,6 +17,8 @@ import logging
 import os
 import sys
 import tempfile
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
@@ -311,6 +313,98 @@ def _m4():
     r = kirim(c, device_anon_id="banding-ngaco", location_source="palsu")
     assert r.status_code == 422, "nilai location_source sembarang diterima"
     return "default 'live'; nilai di luar live/replay ditolak"
+
+
+# --- Konkurensi ----------------------------------------------------
+
+@cek("Permintaan serentak tidak merusak hitungan pengamat")
+def _k1():
+    c = siapkan()
+    galat = []
+
+    def kirim(i):
+        try:
+            r = c.post("/api/v1/verify", json={
+                "payload": qr(), "lat": LAT, "lng": LNG,
+                "device_anon_id": f"paralel-{i:04d}"})
+            if r.status_code != 200:
+                galat.append(f"HTTP {r.status_code}")
+        except Exception as exc:
+            galat.append(f"{type(exc).__name__}: {exc}")
+
+    N = 60
+    utas = [threading.Thread(target=kirim, args=(i,)) for i in range(N)]
+    mulai = time.perf_counter()
+    for u in utas:
+        u.start()
+    for u in utas:
+        u.join()
+    lama = (time.perf_counter() - mulai) * 1000
+
+    assert not galat, f"{len(galat)} permintaan gagal: {sorted(set(galat))}"
+
+    obs = api.store.conn.execute(
+        "SELECT COUNT(*) c FROM observations").fetchone()["c"]
+    oc = api.store.conn.execute(
+        "SELECT observer_count FROM bindings WHERE nmid = ?",
+        (NMID,)).fetchone()["observer_count"]
+
+    # Jangkar sudah diseed 47 pengamat, jadi N device baru menambahkannya.
+    assert obs == N, f"observations {obs}, harusnya {N}"
+    assert oc == 47 + N, f"observer_count {oc}, harusnya {47 + N}"
+    return f"{N} thread serentak, {lama:.0f} ms, nol galat, hitungan tepat"
+
+
+@cek("Device yang sama dikirim serentak tetap dihitung sekali")
+def _k2():
+    c = siapkan()
+
+    def kirim():
+        c.post("/api/v1/verify", json={
+            "payload": qr(), "lat": LAT, "lng": LNG,
+            "device_anon_id": "device-yang-sama"})
+
+    utas = [threading.Thread(target=kirim) for _ in range(50)]
+    for u in utas:
+        u.start()
+    for u in utas:
+        u.join()
+
+    oc = api.store.conn.execute(
+        "SELECT observer_count FROM bindings WHERE nmid = ?",
+        (NMID,)).fetchone()["observer_count"]
+    obs = api.store.conn.execute(
+        "SELECT COUNT(*) c FROM observations").fetchone()["c"]
+    assert obs == 1, f"observations {obs}, idempotensi jebol"
+    assert oc == 48, f"observer_count {oc}, harusnya 47 + 1"
+    return "50 permintaan paralel dari satu device -> tetap 1 pengamat"
+
+
+@cek("Kapasitas jauh di atas kebutuhan demo")
+def _k3():
+    c = siapkan()
+    N = 200
+
+    def kirim(i):
+        c.post("/api/v1/verify", json={
+            "payload": qr(), "lat": LAT, "lng": LNG,
+            "device_anon_id": f"beban-{i:04d}"})
+
+    utas = [threading.Thread(target=kirim, args=(i,)) for i in range(N)]
+    mulai = time.perf_counter()
+    for u in utas:
+        u.start()
+    for u in utas:
+        u.join()
+    detik = time.perf_counter() - mulai
+    laju = N / detik
+
+    obs = api.store.conn.execute(
+        "SELECT COUNT(*) c FROM observations").fetchone()["c"]
+    assert obs == N, f"observations {obs}, harusnya {N}"
+    # Demo memakai 2-3 HP. Margin puluhan kali lipat sudah lebih dari cukup.
+    assert laju > 50, f"hanya {laju:.0f} permintaan/detik"
+    return f"{N} serentak dalam {detik * 1000:.0f} ms = {laju:.0f} permintaan/detik"
 
 
 # --- Laporan -------------------------------------------------------

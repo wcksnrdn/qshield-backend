@@ -17,6 +17,7 @@ tidak ada jejak pergerakan yang bisa direkonstruksi darinya.
 """
 
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -81,12 +82,27 @@ def _row_to_binding(row: sqlite3.Row) -> bd.Binding:
 
 class Store:
     def __init__(self, path: str = "qshield.db"):
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        # isolation_level=None mematikan transaksi implisit sqlite3 supaya
+        # record() bisa membuka transaksinya sendiri secara eksplisit.
+        self.conn = sqlite3.connect(
+            path, check_same_thread=False, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
+
+        # Satu koneksi dipakai bersama oleh seluruh thread — dan uvicorn
+        # menjalankan endpoint sync di threadpool, jadi permintaan yang
+        # datang bersamaan benar-benar menyentuh koneksi ini serentak.
+        # Tanpa kunci, sqlite3 melempar InterfaceError / "another row
+        # available" dan hitungan pengamat hilang. Terukur: 25 dari 60
+        # permintaan paralel gagal, observations 41 dari 60.
+        self._lock = threading.RLock()
+
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # WAL membuat pembaca tidak memblokir penulis; busy_timeout
+        # memberi ruang kalau toh ada proses lain yang sedang menulis.
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.executescript(SCHEMA)
         self._migrate()
-        self.conn.commit()
 
     def _migrate(self):
         """Tambahkan kolom agregat Layer 2 ke database lama.
@@ -107,7 +123,8 @@ class Store:
                     f"ALTER TABLE bindings ADD COLUMN {nama} {tipe}")
 
     def close(self):
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
     # --- pembacaan -------------------------------------------------
 
@@ -118,15 +135,17 @@ class Store:
         """
         cells = bd.index_cells(lat, lng)
         marks = ",".join("?" * len(cells))
-        rows = self.conn.execute(
-            f"SELECT * FROM bindings WHERE geohash_7 IN ({marks})", cells
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT * FROM bindings WHERE geohash_7 IN ({marks})", cells
+            ).fetchall()
         return [_row_to_binding(r) for r in rows]
 
     def by_nmid(self, nmid: str) -> list:
-        rows = self.conn.execute(
-            "SELECT * FROM bindings WHERE nmid = ?", (nmid,)
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM bindings WHERE nmid = ?", (nmid,)
+            ).fetchall()
         return [_row_to_binding(r) for r in rows]
 
     def anchor_state(self, lat: float, lng: float,
@@ -141,9 +160,10 @@ class Store:
         now = now or datetime.now(timezone.utc)
         cells = bd.index_cells(lat, lng)
         marks = ",".join("?" * len(cells))
-        rows = self.conn.execute(
-            f"SELECT * FROM bindings WHERE geohash_7 IN ({marks})", cells
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT * FROM bindings WHERE geohash_7 IN ({marks})", cells
+            ).fetchall()
 
         di_jangkar = [
             r for r in rows
@@ -161,11 +181,13 @@ class Store:
         )
 
     def stats(self) -> dict:
-        b = self.conn.execute("SELECT COUNT(*) c FROM bindings").fetchone()["c"]
-        o = self.conn.execute("SELECT COUNT(*) c FROM observations").fetchone()["c"]
-        n = self.conn.execute(
-            "SELECT COUNT(DISTINCT nmid) c FROM bindings"
-        ).fetchone()["c"]
+        with self._lock:
+            b = self.conn.execute(
+                "SELECT COUNT(*) c FROM bindings").fetchone()["c"]
+            o = self.conn.execute(
+                "SELECT COUNT(*) c FROM observations").fetchone()["c"]
+            n = self.conn.execute(
+                "SELECT COUNT(DISTINCT nmid) c FROM bindings").fetchone()["c"]
         return {"bindings": b, "observations": o, "merchants": n}
 
     # --- penulisan -------------------------------------------------
@@ -179,54 +201,73 @@ class Store:
         merchant_name: Optional[str] = None,
         now: Optional[datetime] = None,
     ) -> bd.Binding:
-        """Catat satu pengamatan. Idempoten per (binding, device)."""
+        """Catat satu pengamatan. Idempoten per (binding, device).
+
+        Seluruh urutannya berjalan dalam SATU transaksi. Versi lama
+        melakukan SELECT lalu INSERT/UPDATE terpisah — dua permintaan yang
+        datang bersamaan bisa sama-sama membaca state yang sama, lalu
+        sama-sama menulis. Akibatnya terukur: 25 dari 60 permintaan
+        paralel gagal dan observer_count berhenti di 40, bukan 60.
+
+        Perlu dicatat, ini bukan kelemahan SQLite. Urutan baca-ubah-tulis
+        yang sama akan balapan di Postgres juga; yang menyelesaikannya
+        adalah upsert atomik di bawah, bukan pindah database.
+        """
         now = now or datetime.now(timezone.utc)
         gh7 = geo.encode(lat, lng, bd.INDEX_PRECISION)
         gh6 = geo.encode(lat, lng, bd.AREA_PRECISION)
+        waktu = _iso(now)
 
-        row = self.conn.execute(
-            "SELECT * FROM bindings WHERE nmid = ? AND geohash_7 = ?", (nmid, gh7)
-        ).fetchone()
+        with self._lock:
+            # IMMEDIATE mengambil kunci tulis sejak awal, bukan menunggu
+            # sampai penulisan pertama — mencegah dua transaksi sama-sama
+            # maju lalu salah satunya gagal di tengah jalan.
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Upsert: baris dibuat kalau belum ada, diperbarui kalau
+                # sudah. Tidak ada celah antara memeriksa dan menulis.
+                # merchant_name hanya diisi kalau sebelumnya kosong.
+                row = self.conn.execute(
+                    """INSERT INTO bindings
+                       (nmid, lat, lng, geohash_7, geohash_6, merchant_name,
+                        observer_count, first_seen, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                       ON CONFLICT (nmid, geohash_7) DO UPDATE SET
+                           last_seen = excluded.last_seen,
+                           merchant_name = COALESCE(bindings.merchant_name,
+                                                    excluded.merchant_name)
+                       RETURNING id""",
+                    (nmid, lat, lng, gh7, gh6, merchant_name, waktu, waktu),
+                ).fetchone()
+                binding_id = row["id"]
 
-        if row is None:
-            cur = self.conn.execute(
-                """INSERT INTO bindings
-                   (nmid, lat, lng, geohash_7, geohash_6, merchant_name,
-                    observer_count, first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
-                (nmid, lat, lng, gh7, gh6, merchant_name, _iso(now), _iso(now)),
-            )
-            binding_id = cur.lastrowid
-        else:
-            binding_id = row["id"]
-            self.conn.execute(
-                "UPDATE bindings SET last_seen = ? WHERE id = ?",
-                (_iso(now), binding_id),
-            )
-            if merchant_name and not row["merchant_name"]:
-                self.conn.execute(
-                    "UPDATE bindings SET merchant_name = ? WHERE id = ?",
-                    (merchant_name, binding_id),
-                )
+                # Satu device hanya dihitung sekali per binding.
+                inserted = self.conn.execute(
+                    """INSERT OR IGNORE INTO observations
+                       (binding_id, device_anon_id, observed_at)
+                       VALUES (?, ?, ?)""",
+                    (binding_id, device_anon_id, waktu),
+                ).rowcount
 
-        # Satu device hanya dihitung sekali per binding.
-        inserted = self.conn.execute(
-            """INSERT OR IGNORE INTO observations
-               (binding_id, device_anon_id, observed_at) VALUES (?, ?, ?)""",
-            (binding_id, device_anon_id, _iso(now)),
-        ).rowcount
+                if inserted:
+                    # Penambahan dilakukan di dalam SQL, bukan di Python,
+                    # supaya tidak ada nilai lama yang dibaca lebih dulu.
+                    self.conn.execute(
+                        """UPDATE bindings
+                           SET observer_count = observer_count + 1
+                           WHERE id = ?""",
+                        (binding_id,),
+                    )
 
-        if inserted:
-            self.conn.execute(
-                "UPDATE bindings SET observer_count = observer_count + 1 WHERE id = ?",
-                (binding_id,),
-            )
+                hasil = self.conn.execute(
+                    "SELECT * FROM bindings WHERE id = ?", (binding_id,)
+                ).fetchone()
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
 
-        self.conn.commit()
-        row = self.conn.execute(
-            "SELECT * FROM bindings WHERE id = ?", (binding_id,)
-        ).fetchone()
-        return _row_to_binding(row)
+        return _row_to_binding(hasil)
 
     def note_anomaly(self, binding_id: int,
                      now: Optional[datetime] = None) -> None:
@@ -239,14 +280,14 @@ class Store:
         adalah pemilik sah jangkar — lihat behavior._behavioral_signals().
         """
         now = now or datetime.now(timezone.utc)
-        self.conn.execute(
-            """UPDATE bindings
-               SET anomaly_attempts = anomaly_attempts + 1,
-                   last_anomaly_at  = ?
-               WHERE id = ?""",
-            (_iso(now), binding_id),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                """UPDATE bindings
+                   SET anomaly_attempts = anomaly_attempts + 1,
+                       last_anomaly_at  = ?
+                   WHERE id = ?""",
+                (_iso(now), binding_id),
+            )
 
     def seed_binding(
         self,
@@ -261,12 +302,12 @@ class Store:
         """Sisipkan binding dengan riwayat siap pakai, untuk demo."""
         gh7 = geo.encode(lat, lng, bd.INDEX_PRECISION)
         gh6 = geo.encode(lat, lng, bd.AREA_PRECISION)
-        self.conn.execute(
-            """INSERT OR REPLACE INTO bindings
-               (nmid, lat, lng, geohash_7, geohash_6, merchant_name,
-                observer_count, first_seen, last_seen)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (nmid, lat, lng, gh7, gh6, merchant_name, observer_count,
-             _iso(first_seen), _iso(last_seen)),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                """INSERT OR REPLACE INTO bindings
+                   (nmid, lat, lng, geohash_7, geohash_6, merchant_name,
+                    observer_count, first_seen, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (nmid, lat, lng, gh7, gh6, merchant_name, observer_count,
+                 _iso(first_seen), _iso(last_seen)),
+            )

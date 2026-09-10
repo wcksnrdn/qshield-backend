@@ -12,3 +12,7 @@ props/
 
 # Rekaman koordinat venue — spesifik per lokasi acara
 venue.json
+
+# WAL sidecar SQLite
+qshield.db-wal
+qshield.db-shm

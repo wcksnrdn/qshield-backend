@@ -550,6 +550,59 @@ akan mengulang persis kesalahan yang dikoreksi Keputusan 12.
 
 ---
 
+## Keputusan 21 — record() dibuat atomik; bukan SQLite yang salah
+
+Ditemukan saat memeriksa kesiapan demo, bukan saat menulis fitur. Enam
+puluh permintaan yang datang bersamaan — persis situasi dua-tiga HP
+memindai serentak — menghasilkan:
+
+```
+  galat            25 dari 60
+  observations     41   (harusnya 60)
+  observer_count   40   (harusnya 60)
+```
+
+Dua penyebab berbeda, dan penting membedakannya karena obatnya beda:
+
+| Gejala | Penyebab |
+|---|---|
+| `InterfaceError`, `another row available` | satu koneksi sqlite3 dipakai bersama lintas thread tanpa kunci |
+| `UNIQUE constraint failed`, hitungan hilang | `record()` melakukan SELECT lalu INSERT/UPDATE terpisah — baca-ubah-tulis tanpa transaksi |
+
+**Yang kedua bukan kelemahan SQLite.** Urutan baca-ubah-tulis yang sama
+akan balapan di Postgres juga; ia hanya akan mengeluh dengan kalimat
+berbeda. Pindah database tanpa membetulkan ini berarti membayar ongkos
+migrasi dan tetap kehilangan data — cuma pesan errornya yang ganti
+bahasa. Ini alasan `record()` dibetulkan lebih dulu, terpisah dari
+pertanyaan SQLite-versus-Postgres.
+
+Yang dikerjakan:
+
+- `threading.RLock` melindungi koneksi bersama
+- `record()` berjalan dalam satu transaksi `BEGIN IMMEDIATE`
+- SELECT-lalu-INSERT diganti **upsert atomik** (`ON CONFLICT DO UPDATE
+  ... RETURNING`), sehingga tidak ada celah antara memeriksa dan menulis
+- penambahan `observer_count` dilakukan di dalam SQL, bukan di Python
+- `PRAGMA journal_mode = WAL` dan `busy_timeout`
+
+Sesudahnya:
+
+```
+   60 thread serentak    0 galat   60/60 konsisten
+  200 thread serentak    0 galat  200/200 konsisten   142 permintaan/detik
+   50 permintaan device SAMA -> observer_count tetap 1
+```
+
+Angka 142 permintaan/detik itu sekaligus menjawab pertanyaan
+SQLite-versus-Postgres untuk demo: kebutuhan panggung 2-3 HP, marginnya
+puluhan kali lipat. Postgres tetap dibutuhkan menuju produksi — penulis
+lintas proses masih diserialisasi — tapi bukan untuk 3 Oktober, dan
+bukan untuk memperbaiki bug ini.
+
+Dikunci di `test_hardening.py`: tiga pemeriksaan konkurensi.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -561,8 +614,8 @@ test_invariants.py   satu pemeriksaan per invarian, keluar bukan-nol
                      kalau ada yang jebol
 test_adversarial.py  15 skenario dari sisi penyerang, termasuk empat
                      batasan yang diakui — diuji agar sistem tetap jujur
-test_hardening.py    15 pemeriksaan: validasi input, rate limit, header,
-                     audit tanpa PII, dan mode replay
+test_hardening.py    18 pemeriksaan: validasi input, rate limit, header,
+                     audit tanpa PII, mode replay, dan konkurensi
 ```
 
 Dokumen ancaman terpisah ada di `THREAT-MODEL.md`.
