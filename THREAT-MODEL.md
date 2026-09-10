@@ -125,6 +125,8 @@ bukan sekadar gangguan UX.
 | T11 | Meracuni jangkar merchant jujur agar skornya naik (DoS reputasi) | P5 | `repeated_anomaly_at_anchor` dimatikan bila yang memindai adalah merchant **mapan** di jangkar itu; "mapan" diambil dari putusan Layer 1 | `test_adversarial.py` "Meracuni jangkar merchant jujur" |
 | T12 | Merchant bersebelahan saling memicu alarm | — (bukan serangan, tapi merusak A4) | Koeksistensi dibedakan dari penggantian: bila keduanya mapan dan aktif → `adjacent_merchant`, bobot ringan | `test_invariants.py` #7 (jarak 5-35 m) |
 | T13 | Putusan palsu dari GPS yang tidak layak dipercaya | P3 | `accuracy_m` > 100 m → menolak memberi putusan lokasi, `unknown` + alasan eksplisit | `test_invariants.py` #6 |
+| T28 | Akurasi dikarang di bawah batas fisik perangkat | P3 | GNSS ponsel tidak pernah melaporkan radius <1 m; nilai di bawah itu ditandai `implausible_accuracy` | `test_adversarial.py` "Akurasi GPS dikarang" |
+| T29 | `accuracy_m` dihilangkan untuk melewati T13 | P3 | Field ini **wajib**; absennya ditolak `422` di batas sistem, bukan diberi skor | `test_adversarial.py` "Akurasi dihilangkan" |
 | T14 | Sinyal yang menandai merchant sah sebagai penyerang | — | Konstanta wajib punya dasar empiris; sinyal yang gagal kalibrasi dibuang, bukan dipaksakan | `calibrate_layer2.py` — sinyal lonjakan pemindaian dibuang |
 
 ### 5.4 Terhadap privasi (A3)
@@ -161,7 +163,7 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 
 | # | Risiko residual | Kenapa belum ditahan | Rencana | Dampak nyata |
 |---|---|---|---|---|
-| R1 | **Mock location / GPS palsu** | Server tidak bisa memverifikasi koordinat yang diklaim klien | Deteksi integritas perangkat; butuh SDK native | Terbatas: spoof **tidak** memberi keuntungan untuk NMID yang bukan milik penyerang — swap tetap tertangkap (diuji) |
+| R1 | **Mock location / GPS palsu** | Server tidak bisa memverifikasi koordinat yang diklaim klien. Mitigasi terkuat — perjalanan mustahil per perangkat — **ditutup dengan sengaja** demi privasi (lihat §7) | Deteksi integritas perangkat; butuh SDK native | **Dipersempit.** Akurasi yang mustahil secara fisik ditandai; `accuracy_m` wajib sehingga invarian §6 tidak bisa dilewati dengan menghilangkannya; spoof tetap tidak memberi keuntungan untuk NMID yang bukan milik penyerang |
 | R2 | **Replay QR dinamis** | Tidak ada pelacakan nonce per transaksi; butuh keterlibatan PJP | Di luar jangkauan lapisan pra-pembayaran | Sistem tidak mengklaim bisa (diuji) |
 | R3 | **Merchant berjarak <15 m** | Presisi GPS tidak cukup memisahkan | Ambient WiFi fingerprinting; tidak tersedia lewat browser | Ditangani sebagian oleh `adjacent_merchant` |
 | R4 | **Cold start** | Basis data kosong tidak punya bukti apa pun | Pendaftaran mandiri merchant | Ditangani jujur: `unknown`, bukan `verified` |
