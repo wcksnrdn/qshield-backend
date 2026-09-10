@@ -166,7 +166,7 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 | R6 | **Merchant keliling** | Model jangkar mengasumsikan lokasi tetap | Penandaan khusus saat pendaftaran | Belum ditangani sama sekali |
 | R7 | **Sidik jari encoding belum tervalidasi lapangan** | Belum punya korpus payload QRIS asli dari berbagai acquirer | Kumpulkan korpus | Bobot kecil dan dibatasi bersama; tidak pernah bisa menggerakkan tier sendirian |
 | R8 | **Rate limit per-IP kasar di balik NAT** | Satu alamat mewakili banyak perangkat | Rate limit per `device_anon_id` sebagai lapis tambahan | Bawaan longgar; bisa dimatikan untuk demo |
-| R10 | **Penyerang yang mapan lebih dulu dianggap merchant bersebelahan** | Aturan `adjacent_merchant` (Keputusan 5) menganggap dua NMID yang sama-sama mapan dan sama-sama aktif sebagai koeksistensi — **tanpa memeriksa jarak antar-jangkar**, sehingga jarak 0 m pun lolos | Lihat proposal di bawah | **Serius** — mengalahkan proposisi nilai inti bila penyerang menang balapan cold start |
+| R10 | **Penyerang yang mapan lebih dulu dianggap merchant bersebelahan** | Aturan `adjacent_merchant` (Keputusan 5) menganggap dua NMID yang sama-sama mapan dan sama-sama aktif sebagai koeksistensi — **tanpa memeriksa jarak antar-jangkar**, sehingga jarak 0 m pun lolos | Opsi C rasio 0,10 — lihat di bawah, sudah dikalibrasi | **Serius** — mengalahkan proposisi nilai inti bila penyerang menang balapan cold start |
 | R9 | **Belum ada autentikasi klien** | PoC; endpoint terbuka | API key / mTLS per PJP sebelum produksi | Siapa pun bisa mengirim pengamatan — jalur pencemaran basis data yang paling lebar saat ini |
 
 ### Proposal untuk R10 — belum diterapkan, butuh keputusan tim
@@ -190,17 +190,69 @@ lapak yang benar-benar bersebelahan kadang tercatat berjarak <5 m, jadi
 ambang jarak yang terlalu ketat akan menandai ruko dan food court sah
 sebagai serangan — merusak aset A4, persis yang dicegah Keputusan 5.
 
-**Dua opsi, keduanya butuh kalibrasi sebelum dipilih:**
+**Tiga opsi, sudah dikalibrasi** (`scripts/calibrate_adjacency.py`):
 
-| Opsi | Isi | Risiko |
+**Opsi A — koeksistensi menghasilkan `unknown`, bukan `verified`.**
+Terukur sebagai yang **paling mahal**, dan ini membatalkan dugaan awal
+kami. Karena `ANCHOR_RADIUS_M` = 50 m, apa pun yang berada dalam radius
+itu memicu `adjacent_merchant` — bukan cuma lapak yang benar-benar
+berdempetan:
+
+| Tata letak | Jarak | Pemindaian sah yang turun ke `warn` |
 |---|---|---|
-| **A** | Koeksistensi tidak lagi menghasilkan `verified`, melainkan `unknown` + `warn`. Kalau dua merchant mapan berbagi satu jangkar, sistem memang **tidak tahu** stiker mana yang sedang dilihat — dan mengaku tidak tahu lebih jujur daripada menebak. Konsisten dengan invarian §2 dan batasan R3. | Setiap pemindaian di food court kena `warn`. Perlu diukur seberapa sering itu terjadi. |
-| **B** | Jarak minimum antar-jangkar sebelum disebut bersebelahan | Butuh kalibrasi lapangan terhadap sebaran jarak jangkar merchant yang benar-benar bersebelahan; data itu belum ada |
+| warung soliter | — | 0,0% |
+| ruko 4 pintu | 8 m | 100,0% |
+| pertokoan jalan | 20 m | 100,0% |
+| pujasera kecil | 4 m | 100,0% |
+| food court mall | 3 m | 100,0% |
+| pasar tradisional | 2,5 m | 100,0% |
 
-Rekomendasi: **opsi A**, karena tidak menambah konstanta baru yang belum
-punya dasar empiris, dan karena "tidak tahu" memang jawaban yang benar
-di situasi ini. Tapi keputusannya milik tim, dan angka biaya opsi A
-(seberapa banyak pemindaian sah jadi `warn`) harus diukur dulu.
+Artinya **setiap** pemindaian di area komersial mana pun berakhir
+`warn`. Itu menghancurkan aset A4: peringatan yang selalu muncul adalah
+peringatan yang diabaikan. **Opsi A ditolak.**
+
+**Opsi B — jarak minimum antar-jangkar.** Gugur secara empiris. Koordinat
+jangkar ditetapkan dari pengamatan pertama, jadi galat GPS satu pembacaan
+(sigma ~8 m) melekat permanen padanya. Sebaran jarak jangkar untuk swap
+di titik yang sama dan untuk merchant yang benar-benar bersebelahan
+tumpang tindih hampir sempurna justru di jarak yang paling penting:
+
+| Jarak nyata | Jangkar merchant sah (p10-p90) | Jangkar swap | Tumpang tindih |
+|---|---|---|---|
+| 2,5 m | 3,2-18,1 m | 2,8-17,6 m | 79,1% |
+| 4 m | 3,5-18,6 m | 2,8-17,6 m | 78,0% |
+| 8 m | 5,0-21,4 m | 2,8-17,6 m | 71,9% |
+| 15 m | 8,7-26,6 m | 2,8-17,6 m | 48,7% |
+| 25 m | 16,7-36,5 m | 2,8-17,6 m | 11,8% |
+
+Ini batasan R3 yang muncul lagi, bukan parameter yang bisa disetel.
+**Opsi B ditolak.**
+
+**Opsi C — pengecualian koeksistensi menuntut basis pengamat yang
+sebanding.** Merchant yang benar-benar bersebelahan menghisap lalu lintas
+kaki yang sama, jadi jumlah pengamatnya sepadan. Penyerang yang memupuk 3
+device di sebelah merchant 47 pengamat tidak. Aturannya perbandingan,
+bukan jarak — sehingga tata letak padat tidak tersentuh sama sekali:
+
+| Rasio | Pasangan merchant sah tertolak | Device yang harus dikeluarkan penyerang |
+|---|---|---|
+| 0,00 (sekarang) | 0,0% | 3 |
+| 0,05 | 0,8% | 3 |
+| **0,10** | **3,5%** | **5** |
+| 0,15 | 7,3% | 8 |
+| 0,25 | 13,6% | 12 |
+| 0,40 | 23,9% | 19 |
+
+**Rekomendasi: opsi C dengan rasio 0,10.** Biaya 3,5% pada pasangan
+merchant sah — dan itu pun hanya berlaku pada pasangan yang sama-sama
+sudah mapan, bukan pada seluruh pemindaian seperti opsi A.
+
+**Kejujuran yang harus disampaikan bersama angka ini:** opsi C
+**menaikkan biaya** penyerang, tidak menutup celahnya. Penyerang yang mau
+mengeluarkan lebih banyak device tetap lolos. Yang berubah adalah
+serangan 3-device yang murah jadi tidak lagi cukup. Penutupan sungguhan
+menuntut R1 (integritas perangkat) atau R9 (autentikasi klien) — dan itu
+memang jawaban yang benar untuk pertanyaan ini.
 
 **R9 adalah risiko terbuka terbesar saat ini** dan sengaja ditaruh
 terakhir agar tidak tenggelam. Rate limiting memperlambat pencemaran
@@ -271,5 +323,10 @@ Filbert — tiga hal yang paling perlu pandangan kedua:
    korbannya sudah mapan **tidak** bisa dibajak lewat API, tapi penyerang
    yang menang balapan cold start lolos sebagai "merchant bersebelahan".
    Yang perlu pandangan kedua adalah pilihan A vs B dan biaya opsi A.
-3. **§7.** Argumen privasi ini yang akan dipakai menjawab pertanyaan
+3. **§6 R10 opsi C.** Rasio 0,10 memberi 3,5% positif palsu dan menaikkan
+   biaya penyerang dari 3 ke 5 device. Apakah trade-off itu diterima, atau
+   lebih baik 0,15 (7,3% / 8 device)? Ini keputusan yang menyentuh
+   invarian §7, jadi butuh persetujuan tim sebelum diterapkan.
+
+4. **§7.** Argumen privasi ini yang akan dipakai menjawab pertanyaan
    Kaspersky. Apakah ada celah yang bisa dibantah?

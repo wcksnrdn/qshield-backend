@@ -483,6 +483,44 @@ memberi tahu.
 
 ---
 
+## Keputusan 19 — Biaya R10 diukur, dan rekomendasi awal dibatalkan
+
+`scripts/calibrate_adjacency.py` mengukur harga tiga usulan penutup celah
+R10. Hasilnya membatalkan rekomendasi yang ditulis sendiri di Keputusan 18.
+
+**Opsi A ternyata yang paling mahal.** Dugaannya: menurunkan koeksistensi
+dari `verified` ke `unknown` cuma merepotkan food court. Kenyataannya
+`ANCHOR_RADIUS_M` = 50 m membuat apa pun dalam radius itu memicu
+`adjacent_merchant` — termasuk pertokoan berjarak 20 m. Biayanya **100%
+pemindaian sah turun ke `warn`** di setiap tata letak selain warung
+soliter. Peringatan yang selalu muncul adalah peringatan yang diabaikan,
+dan itu menghancurkan aset A4. Ditolak.
+
+**Opsi B gugur secara empiris.** Koordinat jangkar ditetapkan dari
+pengamatan pertama, jadi galat GPS satu pembacaan melekat permanen.
+Sebaran jarak jangkar untuk swap di titik yang sama dan untuk merchant
+yang benar-benar bersebelahan tumpang tindih **72-79%** justru di jarak
+2,5-8 m, yaitu pujasera dan pasar. Ini batasan R3 yang muncul lagi, bukan
+parameter yang bisa disetel. Ditolak.
+
+**Opsi C yang bertahan.** Pengecualian koeksistensi menuntut basis
+pengamat yang sebanding dengan tetangganya — aturannya perbandingan,
+bukan jarak, sehingga tata letak padat tidak tersentuh sama sekali. Pada
+rasio 0,10: **3,5%** pasangan merchant sah tertolak, dan biaya penyerang
+naik dari 3 ke 5 device.
+
+Yang harus disampaikan bersama angka itu: opsi C **menaikkan biaya**
+penyerang, tidak menutup celahnya. Penutupan sungguhan menuntut R1
+(integritas perangkat) atau R9 (autentikasi klien).
+
+Belum diterapkan — menyentuh invarian §7, jadi menunggu persetujuan tim.
+
+Pelajaran yang layak dicatat: rekomendasi di Keputusan 18 ditulis dengan
+percaya diri dan salah. Yang membatalkannya bukan argumen yang lebih
+bagus, melainkan enam baris tabel.
+
+---
+
 ## Hasil pengujian
 
 ```
