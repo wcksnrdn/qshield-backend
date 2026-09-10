@@ -16,3 +16,6 @@ venue.json
 # WAL sidecar SQLite
 qshield.db-wal
 qshield.db-shm
+
+# Data container
+data/

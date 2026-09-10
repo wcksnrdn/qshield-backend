@@ -69,7 +69,24 @@ venv ini (dipakai oleh `uvicorn qshield.api:app`, `tests/`, dan
 `scripts/`), tanpa perlu `PYTHONPATH` manual — kecuali `test_api.py`,
 yang juga mengimpor `scripts/seed.py` secara langsung.
 
-Keputusan desain dan temuan tercatat di `PROCESS-LOG.md`.
+## Dokumen
+
+| Berkas | Isi |
+|---|---|
+| `PROCESS-LOG.md` | keputusan desain, temuan, dan alasannya |
+| `THREAT-MODEL.md` | batas kepercayaan, ancaman, mitigasi + bukti testnya |
+| `API.md` | kontrak API v1 dan kebijakan versinya |
+| `DEPLOY.md` | rencana migrasi Postgres, secrets, container |
+
+## Sebelum demo
+
+```bash
+python scripts/preflight.py
+```
+
+Memeriksa konfigurasi, basis data, kecocokan jangkar dengan koordinat
+venue, prop tercetak, putusan API, dan seluruh suite. Keluar bukan-nol
+kalau ada yang belum siap.
 
 ## Troubleshooting: `ModuleNotFoundError: No module named 'qshield'`
 

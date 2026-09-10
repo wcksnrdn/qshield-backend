@@ -1,0 +1,25 @@
+# Untuk pengembangan dan peragaan kesiapan produksi.
+# Demo 3 Oktober tetap jalan langsung dengan uvicorn — lihat DEPLOY.md §4.
+
+services:
+  api:
+    build: .
+    image: qshield:0.1.0
+    ports:
+      - "8000:8000"
+    environment:
+      # Wajib diisi. Terbitkan dengan:
+      #   python scripts/make_apikey.py pjp-alpha
+      QSHIELD_API_KEYS: "${QSHIELD_API_KEYS:?setel QSHIELD_API_KEYS dulu}"
+      # Harus stabil dan sama di semua instans yang berbagi basis data.
+      # Garam yang berubah membuat pengamat lama terhitung ulang.
+      QSHIELD_DEVICE_SALT: "${QSHIELD_DEVICE_SALT:?setel QSHIELD_DEVICE_SALT dulu}"
+      QSHIELD_ALLOWED_ORIGINS: "${QSHIELD_ALLOWED_ORIGINS:-http://localhost:3000}"
+      QSHIELD_RATE_LIMIT: "${QSHIELD_RATE_LIMIT:-60}"
+      QSHIELD_LOG_LEVEL: "${QSHIELD_LOG_LEVEL:-INFO}"
+    volumes:
+      - qshield-data:/data
+    restart: unless-stopped
+
+volumes:
+  qshield-data:

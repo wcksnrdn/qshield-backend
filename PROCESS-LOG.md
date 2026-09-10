@@ -750,6 +750,96 @@ menjawab Kaspersky dan yang memungkinkan berbagi data antar-PJP.
 
 ---
 
+## Keputusan 25 — SQLite dipertahankan untuk demo, dengan angkanya
+
+Handoff meminta rencana migrasi Postgres **atau** justifikasi tertulis
+kenapa tetap SQLite. Ini justifikasinya, dan dasarnya ukuran.
+
+| Beban | Hasil |
+|---|---|
+| 60 permintaan HTTP serentak | 0 galat, hitungan tepat |
+| 200 permintaan HTTP serentak | 0 galat, ~142 permintaan/detik |
+| 12 proses x 200 tulis | 2400/2400 konsisten, ~2.800 tulis/detik |
+| 20 proses x 200 tulis | 4000/4000 konsisten, ~3.000 tulis/detik |
+
+Kebutuhan panggung: dua sampai tiga ponsel. Marginnya ratusan kali
+lipat, dan SQLite tidak menambah satu pun proses yang bisa mati di
+depan juri.
+
+**Yang akan memaksa pindah bukan kecepatan, melainkan berbagi data
+antar-PJP** — inti proposisi nilai Q-Shield, karena stiker penipu tidak
+berhenti di batas satu penyelenggara. Berbagi menuntut basis data yang
+bisa dijangkau banyak pihak lewat jaringan; SQLite adalah berkas di satu
+mesin. Rencana lengkapnya di `DEPLOY.md`.
+
+**Dua bug ditemukan saat mengukurnya.**
+
+*Urutan PRAGMA.* `busy_timeout` dipasang setelah `journal_mode = WAL`,
+padahal peralihan ke WAL sendiri butuh kunci eksklusif sesaat. Pada saat
+paling rawan itu, tidak ada timeout sama sekali. Terukur: 5 dari 6
+proses gagal start hanya karena urutan dua baris terbalik.
+
+*Inisialisasi dingin.* DDL menuntut kunci eksklusif, dan beberapa proses
+yang membuka basis data yang belum ada secara bersamaan — persis
+`uvicorn --workers N` saat start dingin — masih bisa bertabrakan.
+Ditutup dengan retry terbatas yang melempar galat aslinya setelah
+percobaan habis, bukan menelannya.
+
+---
+
+## Keputusan 26 — Kontrak API dikunci sebelum freeze
+
+`accuracy_m` yang berubah jadi wajib (Keputusan 23) adalah perubahan
+yang **memecah klien**. Perubahan seperti itu boleh terjadi sebelum ada
+klien eksternal, asal disengaja dan tercatat. Yang tidak boleh adalah
+terjadi tanpa ada yang menyadarinya sampai frontend rusak di depan juri.
+
+`API.md` menuliskan kontraknya, dan `tests/test_contract.py`
+menegakkannya dengan membaca skema OpenAPI yang dihasilkan kode.
+
+Pemisahan yang disengaja:
+
+| Terbuka | Tertutup |
+|---|---|
+| `signals`, `reasons` — tempat sinyal baru mendarat tanpa memecah klien | `verdict`, `action`, `location_source` — klien memetakannya ke UI, nilai tak dikenal membuat mereka tidak tahu harus menampilkan apa |
+
+Diuji terhadap penyimpangan sungguhan, bukan sekadar dijalankan hijau:
+disimulasikan seseorang menjadikan `accuracy_m` opsional lagi dan
+menambah field debug ke tanggapan; empat dari enam bagian menangkapnya.
+
+---
+
+## Keputusan 27 — Preflight: satu perintah sebelum juri datang
+
+`scripts/preflight.py` memeriksa hal-hal yang kalau salah baru ketahuan
+di depan juri: konfigurasi, basis data, kecocokan jangkar dengan
+koordinat venue, prop tercetak, putusan API, dan seluruh suite.
+
+Diuji terhadap kegagalan yang paling mungkin terjadi hari-H — seed masih
+dibuat untuk lokasi lama:
+
+```
+[GAGAL] jangkar terkuat berjarak 118292 m dari koordinat venue
+        python scripts/seed.py $(python scripts/venue_fixture.py coords)
+```
+
+Perintah perbaikannya ikut dicetak, karena pagi hari-H bukan waktu untuk
+mengingat-ingat.
+
+**Bug yang ditemukan saat membangunnya.** `RateLimiter` membaca
+`QSHIELD_RATE_LIMIT` untuk flag `disabled` bahkan ketika kuota
+disodorkan eksplisit ke konstruktornya. Artinya kode yang membuat
+limiter secara programatik diam-diam kehilangan seluruh pembatasan
+begitu env itu terpasang — dan kuota yang diminta eksplisit justru yang
+paling tidak boleh diabaikan diam-diam. Sekarang argumen eksplisit
+menang atas env.
+
+Preflight sendiri juga tidak menyetel env untuk melewati autentikasi; ia
+mengganti objeknya. Preflight harus melaporkan mesin apa adanya, bukan
+mesin yang sudah diubahnya sendiri.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -761,9 +851,10 @@ test_invariants.py   satu pemeriksaan per invarian, keluar bukan-nol
                      kalau ada yang jebol
 test_adversarial.py  15 skenario dari sisi penyerang, termasuk empat
                      batasan yang diakui — diuji agar sistem tetap jujur
-test_hardening.py    24 pemeriksaan: validasi input, autentikasi klien,
+test_hardening.py    25 pemeriksaan: validasi input, autentikasi klien,
                      rate limit, header, audit tanpa PII, mode replay,
                      dan konkurensi
+test_contract.py     kunci bentuk API v1 — gagal kalau ada yang bergeser
 ```
 
 Dokumen ancaman terpisah ada di `THREAT-MODEL.md`.
