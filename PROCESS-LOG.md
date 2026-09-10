@@ -521,6 +521,35 @@ bagus, melainkan enam baris tabel.
 
 ---
 
+## Keputusan 20 — Opsi C diterapkan, R10 turun jadi dimitigasi sebagian
+
+Disetujui tim 10 September 2026. `ADJACENT_MIN_RATIO = 0.10` di
+`binding.py`: pengecualian koeksistensi kini menuntut basis pengamat yang
+sebanding dengan tetangga terkuat, bukan sekadar `is_established`.
+
+Satu baris kondisi, satu konstanta. Yang menuntun pilihannya adalah tabel
+di Keputusan 19, bukan selera.
+
+Karena ini mengubah ambang, invarian §7 menuntut skenario ruko diuji
+ulang — dan `test_invariants.py` #7 kini menguji dua sisi sekaligus:
+pasangan merchant sah yang timpang tapi wajar (30-vs-47, 12-vs-90,
+10-vs-47, 5-vs-47) tetap dapat pengecualian, sedangkan 3-vs-47 tidak.
+
+Status R10 berubah dari **terbuka** menjadi **dimitigasi sebagian**, dan
+`test_adversarial.py` sekarang memisahkan keduanya dengan jujur:
+
+| Skenario | Status |
+|---|---|
+| Bajak jangkar yang korbannya sudah mapan | ditahan penuh — 0 binding dari 10 percobaan |
+| Cold start modal murah (3 device) | **ditahan** — sejak Keputusan 20 |
+| Cold start modal besar (>5 device) | belum ditahan; menuntut R1 atau R9 |
+
+Yang tidak boleh hilang dari narasi: ini menaikkan biaya penyerang dari 3
+device ke lebih dari 5, bukan menutup celahnya. Menyebutnya "sudah aman"
+akan mengulang persis kesalahan yang dikoreksi Keputusan 12.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -530,7 +559,7 @@ test_binding.py      13 skenario termasuk ruko dan relokasi merchant
 test_api.py          end-to-end, akumulasi, latency
 test_invariants.py   satu pemeriksaan per invarian, keluar bukan-nol
                      kalau ada yang jebol
-test_adversarial.py  13 skenario dari sisi penyerang, termasuk tiga
+test_adversarial.py  15 skenario dari sisi penyerang, termasuk empat
                      batasan yang diakui — diuji agar sistem tetap jujur
 test_hardening.py    15 pemeriksaan: validasi input, rate limit, header,
                      audit tanpa PII, dan mode replay
@@ -546,7 +575,7 @@ mengunci konstanta tapi menguji ulang buktinya — cakupan presisi 7 versus
 
 Empat skenario terakhir di `test_adversarial.py` adalah serangan yang
 **memang belum ditahan**: spoof koordinat, replay QR dinamis, relokasi
-merchant sah, dan celah cold start R10. Untuk itu yang diuji bukan "apakah tertangkap" melainkan
+merchant sah, dan sisa celah cold start R10 (penyerang bermodal besar). Untuk itu yang diuji bukan "apakah tertangkap" melainkan
 "apakah sistem tetap jujur" — batasan yang diketahui tidak boleh diam-diam
 berubah jadi klaim aman, dan itu bentuk kegagalan yang paling berbahaya.
 

@@ -294,13 +294,12 @@ def _b3():
             f"perlu jalur konfirmasi merchant")
 
 
-@serangan("Mapan lebih dulu di jangkar korban (celah cold start)", ditahan=False)
-def _b4():
+@serangan("Menang balapan cold start dengan modal murah (R10)")
+def _a11():
     s, c = fresh_store()
 
-    # Bagian yang DITAHAN: penyerang tidak bisa membangun kemapanan
-    # lewat API. Setiap pemindaian di jangkar mapan menghasilkan
-    # anomaly, dan anomaly tidak pernah dicatat (invarian §3).
+    # Jangkar yang korbannya sudah mapan tidak bisa dibajak lewat API:
+    # tiap pemindaian jadi anomaly, dan anomaly tidak pernah dicatat.
     for i in range(10):
         scan(c, qr(PENYERANG), device=f"penyerang-{i:04d}")
     milik_penyerang = s.conn.execute(
@@ -310,25 +309,53 @@ def _b4():
         f"penyerang berhasil membuat {milik_penyerang} binding lewat API"
     )
 
-    # Bagian yang BELUM DITAHAN: kalau penyerang sempat mapan lebih dulu
-    # — mis. menempel stiker di merchant baru yang jangkarnya belum
-    # terbentuk, lalu memupuknya dengan 3 device selama 24 jam — maka
-    # begitu merchant sah ikut mapan, keduanya dianggap koeksistensi.
+    # Skenario R10 yang murah: penyerang menang balapan cold start dan
+    # memupuk binding sampai mapan dengan modal seminimal mungkin.
+    s.seed_binding(
+        nmid=PENYERANG, lat=LAT, lng=LNG, merchant_name="WARUNG BU SRI",
+        observer_count=bd.MIN_OBSERVERS,
+        first_seen=NOW - timedelta(days=90), last_seen=NOW - timedelta(hours=1),
+    )
+    d = scan(c, qr(PENYERANG), device="penyerang-9999")
+    assert d["verdict"] == "anomaly", (
+        f"basis {bd.MIN_OBSERVERS} vs 47 lolos sebagai {d['verdict']} — "
+        f"ADJACENT_MIN_RATIO tidak bekerja"
+    )
+    assert "adjacent_merchant" not in d["signals"], (
+        "penyerang modal minimum masih dapat pengecualian koeksistensi"
+    )
+    return (f"basis {bd.MIN_OBSERVERS} vs 47 tidak lagi lolos sebagai "
+            f"merchant bersebelahan (rasio {bd.ADJACENT_MIN_RATIO})")
+
+
+# ==================================================================
+# Batasan yang diakui — di sini yang diuji adalah KEJUJURAN sistem
+# ==================================================================
+
+@serangan("Cold start dengan modal besar (sisa R10)", ditahan=False)
+def _b4():
+    s, c = fresh_store()
+    # Penyerang yang mau mengeluarkan device sebanyak merchant korban
+    # tetap lolos. ADJACENT_MIN_RATIO menaikkan biaya, tidak menutup celah.
     s.seed_binding(
         nmid=PENYERANG, lat=LAT, lng=LNG, merchant_name="WARUNG BU SRI",
         observer_count=40,
         first_seen=NOW - timedelta(days=90), last_seen=NOW - timedelta(hours=1),
     )
-    d = scan(c, qr(PENYERANG), device="penyerang-9999")
+    d = scan(c, qr(PENYERANG), device="penyerang-kaya-01")
     assert d["verdict"] == "verified", (
-        "prasyarat celah berubah — apakah aturan adjacent_merchant "
-        "sudah diperbaiki? Perbarui catatan di THREAT-MODEL.md R10."
+        "prasyarat batasan berubah — apakah R10 sudah tertutup penuh? "
+        "Perbarui THREAT-MODEL.md R10 dan catatan ini."
     )
-    assert "adjacent_merchant" in d["signals"]
-    return ("BELUM DITAHAN: jangkar tidak bisa dibajak lewat API (0 binding "
-            "dari 10 percobaan), tapi penyerang yang mapan LEBIH DULU "
-            "dianggap merchant bersebelahan walau jaraknya 0 m — lihat "
-            "THREAT-MODEL.md R10")
+
+    # Ambang biayanya harus persis seperti yang dikalibrasi.
+    batas = bd.ADJACENT_MIN_RATIO * 47
+    assert bd.MIN_OBSERVERS < batas <= 40, (
+        f"biaya penyerang bergeser: butuh >{batas:.0f} device"
+    )
+    return (f"BELUM DITAHAN SEPENUHNYA: penyerang butuh >{batas:.0f} device "
+            f"(naik dari {bd.MIN_OBSERVERS}); penutupan sungguhan menuntut "
+            f"integritas perangkat atau autentikasi klien")
 
 
 # ==================================================================

@@ -26,6 +26,7 @@ AREA_PRECISION = 6          # presisi untuk deteksi sebaran antar-area
 SCATTER_MIN_KM = 1.0        # jarak minimum agar dianggap area berbeda
 
 MIN_OBSERVERS = 3           # device unik sebelum binding dianggap mapan
+ADJACENT_MIN_RATIO = 0.10   # basis pengamat minimum relatif tetangga
 MIN_AGE_HOURS = 24          # rentang minimal pengamatan pertama ke terakhir
 SCATTER_MIN_AREAS = 2       # jumlah area lain yang memicu alarm sebaran
 STALE_DAYS = 90             # binding tak terlihat selama ini dianggap usang
@@ -200,7 +201,33 @@ def evaluate(
         # Kalau NMID yang discan JUGA sudah mapan dan masih aktif,
         # keduanya hidup berdampingan — ciri merchant bersebelahan
         # (ruko, food court), bukan penggantian.
-        coexisting = current is not None and current.is_established
+        #
+        # Tapi "mapan" saja tidak cukup, dan itu celah R10: penyerang yang
+        # menang balapan cold start bisa memupuk binding palsu sampai
+        # mapan dengan MIN_OBSERVERS device saja, lalu ikut menikmati
+        # pengecualian ini selamanya.
+        #
+        # Karena itu basis pengamatnya harus SEBANDING dengan tetangga.
+        # Merchant yang benar-benar bersebelahan menghisap lalu lintas
+        # kaki yang sama, jadi jumlah pengamatnya sepadan; penyerang yang
+        # memupuk 3 device di sebelah merchant 47 pengamat tidak.
+        #
+        # Rasio 0,10 dikalibrasi di calibrate_adjacency.py: 3,5% pasangan
+        # merchant sah tertolak, dan biaya penyerang naik dari 3 ke 5
+        # device. Perbandingan dipilih, bukan jarak — opsi berbasis jarak
+        # gugur karena galat GPS membuat sebaran jangkar swap dan merchant
+        # bersebelahan tumpang tindih 72-79% pada 2,5-8 m.
+        #
+        # Jujur soal batasnya: ini MENAIKKAN biaya penyerang, bukan
+        # menutup celahnya. Penutupan sungguhan menuntut integritas
+        # perangkat atau autentikasi klien.
+        basis_sebanding = (
+            current is not None
+            and current.observer_count
+            >= ADJACENT_MIN_RATIO * strongest.observer_count
+        )
+        coexisting = (current is not None and current.is_established
+                      and basis_sebanding)
 
         if coexisting:
             score += 20

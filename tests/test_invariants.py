@@ -286,10 +286,35 @@ def _inv7():
         )
         jarak_diuji.append(f"{jarak}m")
 
+    # ADJACENT_MIN_RATIO adalah ambang baru, dan invarian ini menuntut
+    # setiap perubahan ambang diuji ulang terhadap skenario ruko.
+    # Pasangan merchant sah yang timpang tapi masih wajar harus lolos.
+    for milik_saya, tetangga_punya in ((30, 47), (12, 90), (10, 47), (5, 47)):
+        besar = mk("ID1077778888999", *offset(LAT, LNG, 8, 0.5),
+                   observers=tetangga_punya, age_hours=1500, name="TOKO RAMAI")
+        kecil = mk(REAL, LAT, LNG, milik_saya, 2000, "WARUNG SEPI")
+        v = b.evaluate(REAL, LAT, LNG, [kecil, besar], [], now=NOW)
+        assert "adjacent_merchant" in v.signals, (
+            f"{milik_saya} vs {tetangga_punya} pengamat: merchant sah yang "
+            f"lebih sepi kehilangan pengecualian koeksistensi"
+        )
+        assert v.status != b.ANOMALY
+
+    # Sisi sebaliknya: basis yang timpang JAUH adalah pola R10, bukan ruko.
+    tetangga = mk("ID1077778888999", *offset(LAT, LNG, 8, 0.5),
+                  observers=47, age_hours=1500, name="TOKO SEBELAH")
+    penyusup = mk(REAL, LAT, LNG, b.MIN_OBSERVERS, 2000, "STIKER PALSU")
+    v = b.evaluate(REAL, LAT, LNG, [penyusup, tetangga], [], now=NOW)
+    assert "adjacent_merchant" not in v.signals, (
+        f"basis {b.MIN_OBSERVERS} vs 47 masih dapat pengecualian koeksistensi "
+        f"— celah R10 terbuka lagi"
+    )
+
     # Kontrol: kalau yang discan BELUM mapan, ini tetap swap.
     v = b.evaluate(FAKE, LAT, LNG, [korban], [], now=NOW)
     assert v.status == b.ANOMALY, "swap asli tidak boleh ikut dilonggarkan"
-    return "koeksistensi utuh pada " + "/".join(jarak_diuji) + "; swap tetap anomaly"
+    return ("koeksistensi utuh pada " + "/".join(jarak_diuji)
+            + f"; basis timpang wajar lolos, {b.MIN_OBSERVERS}-vs-47 tidak")
 
 
 # --- Invarian 8 ----------------------------------------------------

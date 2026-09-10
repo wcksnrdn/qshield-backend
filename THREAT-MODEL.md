@@ -166,7 +166,7 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 | R6 | **Merchant keliling** | Model jangkar mengasumsikan lokasi tetap | Penandaan khusus saat pendaftaran | Belum ditangani sama sekali |
 | R7 | **Sidik jari encoding belum tervalidasi lapangan** | Belum punya korpus payload QRIS asli dari berbagai acquirer | Kumpulkan korpus | Bobot kecil dan dibatasi bersama; tidak pernah bisa menggerakkan tier sendirian |
 | R8 | **Rate limit per-IP kasar di balik NAT** | Satu alamat mewakili banyak perangkat | Rate limit per `device_anon_id` sebagai lapis tambahan | Bawaan longgar; bisa dimatikan untuk demo |
-| R10 | **Penyerang yang mapan lebih dulu dianggap merchant bersebelahan** | Aturan `adjacent_merchant` (Keputusan 5) menganggap dua NMID yang sama-sama mapan dan sama-sama aktif sebagai koeksistensi — **tanpa memeriksa jarak antar-jangkar**, sehingga jarak 0 m pun lolos | Opsi C rasio 0,10 — lihat di bawah, sudah dikalibrasi | **Serius** — mengalahkan proposisi nilai inti bila penyerang menang balapan cold start |
+| R10 | **Penyerang yang menang balapan cold start** | **Dimitigasi sebagian.** `ADJACENT_MIN_RATIO` = 0,10 menuntut basis pengamat sebanding sebelum pengecualian koeksistensi berlaku; serangan modal minimum (3 device) tidak lagi lolos. Penyerang yang mengeluarkan >5 device masih lolos | Penutupan penuh lewat R1 atau R9 | Sedang — biaya penyerang naik, celah belum tertutup |
 | R9 | **Belum ada autentikasi klien** | PoC; endpoint terbuka | API key / mTLS per PJP sebelum produksi | Siapa pun bisa mengirim pengamatan — jalur pencemaran basis data yang paling lebar saat ini |
 
 ### Proposal untuk R10 — belum diterapkan, butuh keputusan tim
@@ -243,7 +243,8 @@ bukan jarak — sehingga tata letak padat tidak tersentuh sama sekali:
 | 0,25 | 13,6% | 12 |
 | 0,40 | 23,9% | 19 |
 
-**Rekomendasi: opsi C dengan rasio 0,10.** Biaya 3,5% pada pasangan
+**Diterapkan: opsi C dengan rasio 0,10** (`binding.ADJACENT_MIN_RATIO`),
+disetujui tim 10 September 2026. Biaya 3,5% pada pasangan
 merchant sah — dan itu pun hanya berlaku pada pasangan yang sama-sama
 sudah mapan, bukan pada seluruh pemindaian seperti opsi A.
 
@@ -323,10 +324,9 @@ Filbert — tiga hal yang paling perlu pandangan kedua:
    korbannya sudah mapan **tidak** bisa dibajak lewat API, tapi penyerang
    yang menang balapan cold start lolos sebagai "merchant bersebelahan".
    Yang perlu pandangan kedua adalah pilihan A vs B dan biaya opsi A.
-3. **§6 R10 opsi C.** Rasio 0,10 memberi 3,5% positif palsu dan menaikkan
-   biaya penyerang dari 3 ke 5 device. Apakah trade-off itu diterima, atau
-   lebih baik 0,15 (7,3% / 8 device)? Ini keputusan yang menyentuh
-   invarian §7, jadi butuh persetujuan tim sebelum diterapkan.
+3. **§6 R10.** Opsi C rasio 0,10 sudah diterapkan dan diuji. Yang tersisa:
+   apakah biaya penyerang ">5 device" cukup untuk demo, atau perlu
+   dinaikkan ke 0,15 (7,3% positif palsu / 8 device) sebelum onsite?
 
 4. **§7.** Argumen privasi ini yang akan dipakai menjawab pertanyaan
    Kaspersky. Apakah ada celah yang bisa dibantah?
