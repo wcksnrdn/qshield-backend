@@ -9,12 +9,18 @@ Catatan privasi — ini keputusan desain, bukan detail teknis:
   - tabel observations tidak menyimpan koordinat, sehingga tidak
     bisa dipakai merekonstruksi pergerakan seseorang
   - device_anon_id hanya dipakai untuk menghitung pengamat unik
+
+Agregat Layer 2 (anomaly_attempts, scan_window_*) menempel pada baris
+BINDING, bukan pada device. Isinya hitungan dan waktu, bukan siapa —
+tidak ada baris per-device baru dan tidak ada koordinat tambahan, jadi
+tidak ada jejak pergerakan yang bisa direkonstruksi darinya.
 """
 
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
+from . import behavior as bh
 from . import binding as bd
 from . import geo
 
@@ -30,6 +36,10 @@ CREATE TABLE IF NOT EXISTS bindings (
     observer_count  INTEGER NOT NULL DEFAULT 0,
     first_seen      TEXT    NOT NULL,
     last_seen       TEXT    NOT NULL,
+    anomaly_attempts   INTEGER NOT NULL DEFAULT 0,
+    last_anomaly_at    TEXT,
+    scan_window_start  TEXT,
+    scan_window_count  INTEGER NOT NULL DEFAULT 0,
     UNIQUE (nmid, geohash_7)
 );
 
@@ -77,7 +87,28 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        """Tambahkan kolom agregat Layer 2 ke database lama.
+
+        SQLite tidak punya ADD COLUMN IF NOT EXISTS, jadi kolom yang ada
+        diperiksa dulu. Semua kolom baru punya DEFAULT sehingga baris
+        lama tetap sah tanpa backfill.
+        """
+        ada = {c["name"] for c in
+               self.conn.execute("PRAGMA table_info(bindings)").fetchall()}
+        tambahan = {
+            "anomaly_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "last_anomaly_at": "TEXT",
+            "scan_window_start": "TEXT",
+            "scan_window_count": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for nama, tipe in tambahan.items():
+            if nama not in ada:
+                self.conn.execute(
+                    f"ALTER TABLE bindings ADD COLUMN {nama} {tipe}")
 
     def close(self):
         self.conn.close()
@@ -101,6 +132,39 @@ class Store:
             "SELECT * FROM bindings WHERE nmid = ?", (nmid,)
         ).fetchall()
         return [_row_to_binding(r) for r in rows]
+
+    def anchor_state(self, lat: float, lng: float,
+                     now: Optional[datetime] = None):
+        """Agregat Layer 2 milik jangkar di titik ini.
+
+        Jangkar diwakili binding paling kuat buktinya di radius jangkar:
+        yang sudah mapan kalau ada, kalau tidak yang paling banyak
+        pengamatnya. Mengembalikan (binding_id, nmid, AnchorState);
+        binding_id None kalau belum ada binding di sini sama sekali.
+        """
+        now = now or datetime.now(timezone.utc)
+        cells = bd.index_cells(lat, lng)
+        marks = ",".join("?" * len(cells))
+        rows = self.conn.execute(
+            f"SELECT * FROM bindings WHERE geohash_7 IN ({marks})", cells
+        ).fetchall()
+
+        di_jangkar = [
+            r for r in rows
+            if geo.haversine_m(r["lat"], r["lng"], lat, lng) <= bd.ANCHOR_RADIUS_M
+        ]
+        if not di_jangkar:
+            return None, None, bh.AnchorState()
+
+        mapan = [r for r in di_jangkar if _row_to_binding(r).is_established]
+        dipilih = max(mapan or di_jangkar, key=lambda r: r["observer_count"])
+
+        return dipilih["id"], dipilih["nmid"], bh.AnchorState(
+            anomaly_attempts=dipilih["anomaly_attempts"],
+            last_anomaly_at=_parse(dipilih["last_anomaly_at"]),
+            scan_window_start=_parse(dipilih["scan_window_start"]),
+            scan_window_count=dipilih["scan_window_count"],
+        )
 
     def stats(self) -> dict:
         b = self.conn.execute("SELECT COUNT(*) c FROM bindings").fetchone()["c"]
@@ -151,6 +215,28 @@ class Store:
                     (merchant_name, binding_id),
                 )
 
+        # Jendela tetap untuk deteksi lonjakan: satu penghitung dan satu
+        # waktu mulai, direset begitu jendelanya lewat. Tidak menyimpan
+        # kapan tiap pemindaian terjadi, jadi tidak ada deret waktu yang
+        # bisa dipakai memprofilkan siapa pun.
+        mulai = _parse(row["scan_window_start"]) if row else None
+        lewat = (
+            mulai is None
+            or (now - mulai).total_seconds() / 60 > bh.SCAN_BURST_WINDOW_MIN
+        )
+        if lewat:
+            self.conn.execute(
+                """UPDATE bindings SET scan_window_start = ?, scan_window_count = 1
+                   WHERE id = ?""",
+                (_iso(now), binding_id),
+            )
+        else:
+            self.conn.execute(
+                """UPDATE bindings SET scan_window_count = scan_window_count + 1
+                   WHERE id = ?""",
+                (binding_id,),
+            )
+
         # Satu device hanya dihitung sekali per binding.
         inserted = self.conn.execute(
             """INSERT OR IGNORE INTO observations
@@ -169,6 +255,26 @@ class Store:
             "SELECT * FROM bindings WHERE id = ?", (binding_id,)
         ).fetchone()
         return _row_to_binding(row)
+
+    def note_anomaly(self, binding_id: int,
+                     now: Optional[datetime] = None) -> None:
+        """Catat bahwa jangkar ini menjadi sasaran pemindaian yang ditolak.
+
+        Ini BUKAN observation dan tidak menyentuh observer_count: binding
+        palsu tetap tidak bisa membangun reputasi lewat percobaan
+        berulang (invarian §3). Counter ini hanya pernah menaikkan risiko,
+        tidak pernah menurunkannya, dan diabaikan saat yang memindai
+        adalah pemilik sah jangkar — lihat behavior._behavioral_signals().
+        """
+        now = now or datetime.now(timezone.utc)
+        self.conn.execute(
+            """UPDATE bindings
+               SET anomaly_attempts = anomaly_attempts + 1,
+                   last_anomaly_at  = ?
+               WHERE id = ?""",
+            (_iso(now), binding_id),
+        )
+        self.conn.commit()
 
     def seed_binding(
         self,

@@ -119,6 +119,22 @@ def _action_for(score: int) -> str:
     return COOLING_OFF
 
 
+def _floor_action(status: str, action: str) -> str:
+    """Invarian §2: "unknown" tidak pernah berarti aman.
+
+    Binding yang belum mapan bisa berskor rendah (mis. young_binding = 15)
+    dan jatuh ke proceed — itu mengubah ketiadaan bukti jadi kepercayaan,
+    dan penyerang mengendalikan jalurnya: cukup pindai stikernya sendiri
+    sekali agar skornya turun dari 35 ke 15.
+
+    Dijaga struktural di sini, bukan lewat penyetelan bobot, supaya sinyal
+    baru mana pun — termasuk Layer 2 — tidak bisa membuka celah yang sama.
+    """
+    if status == UNKNOWN and action == PROCEED:
+        return WARN
+    return action
+
+
 def _distinct_areas(bindings: list, lat: float, lng: float) -> list:
     """Kelompokkan binding jadi area yang benar-benar berjauhan.
 
@@ -263,24 +279,60 @@ def evaluate(
     if not reasons:
         reasons.append("Belum ada cukup data untuk memverifikasi lokasi ini")
 
-    action = _action_for(score)
-
-    # Invarian: "unknown" tidak pernah berarti aman. Binding yang belum
-    # mapan bisa berskor rendah (mis. young_binding = 15) dan jatuh ke
-    # proceed — itu mengubah ketiadaan bukti menjadi kepercayaan, dan
-    # penyerang mengendalikan jalurnya: cukup pindai stikernya sendiri
-    # sekali agar skornya turun dari 35 ke 15.
-    #
-    # Dijaga struktural di sini, bukan lewat penyetelan bobot, supaya
-    # sinyal baru mana pun tidak bisa membuka lagi celah yang sama.
-    if status == UNKNOWN and action == PROCEED:
-        action = WARN
-
     return Verdict(
         status=status,
-        action=action,
+        action=_floor_action(status, _action_for(score)),
         risk_score=score,
         reasons=reasons,
         signals=signals,
         matched_binding=current,
+    )
+
+
+# --- Komposisi Layer 1 + Layer 2 -----------------------------------
+
+
+def compose(verdict: "Verdict", behavior) -> "Verdict":
+    """Gabungkan putusan Layer 1 dengan hasil Layer 2 jadi satu putusan.
+
+    Layer 1 menjawab "apakah merchant ini memang yang seharusnya di sini".
+    Layer 2 menjawab "apakah artefak yang dipindai berperilaku seperti QR
+    yang sah". Keduanya bisa gagal sendiri-sendiri, jadi Layer 2
+    MELENGKAPI, bukan menggantikan.
+
+    Tiga aturan, dan ketiganya searah:
+
+    1. Skor dijumlah lalu dijepit 0-100. Layer 2 tidak punya bobot negatif
+       sama sekali — tidak adanya sinyal Layer 2 bukan bukti keabsahan,
+       logika yang sama dengan invarian §2.
+
+    2. Layer 2 tidak pernah bisa MENAIKKAN status ke arah verified.
+       Ia hanya bisa menurunkan:
+         - kontradiksi struktural  -> anomaly
+         - sinyal lain apa pun     -> verified turun jadi unknown,
+           karena jangkarnya boleh jadi benar tapi artefaknya diragukan
+       Status anomaly dari Layer 1 tidak pernah dicabut Layer 2.
+
+    3. Aksi tetap dipetakan ke empat tier yang sama lewat ambang yang
+       sama (invarian §4). Layer 2 tidak memperkenalkan skala baru.
+    """
+    if behavior is None or (behavior.score == 0 and not behavior.hard_violation):
+        return verdict
+
+    score = max(0, min(100, verdict.risk_score + behavior.score))
+
+    if behavior.hard_violation:
+        status = ANOMALY
+    elif verdict.status == VERIFIED:
+        status = UNKNOWN
+    else:
+        status = verdict.status
+
+    return Verdict(
+        status=status,
+        action=_floor_action(status, _action_for(score)),
+        risk_score=score,
+        reasons=verdict.reasons + behavior.reasons,
+        signals=verdict.signals + behavior.signals,
+        matched_binding=verdict.matched_binding,
     )

@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from . import behavior as bh
 from . import binding as bd
 from . import emvco
 from .store import Store
@@ -45,12 +46,25 @@ class MerchantOut(BaseModel):
     is_static: bool
 
 
+class LayerScores(BaseModel):
+    """Rincian per layer.
+
+    Dipisah supaya auditor bisa melihat sumbangan tiap layer, bukan cuma
+    angka gabungan — dan supaya jelas Layer 2 melengkapi, bukan
+    menggantikan, putusan Layer 1.
+    """
+
+    location: int      # Layer 1 — ikatan merchant-lokasi
+    behavior: int      # Layer 2 — perilaku artefak QR
+
+
 class VerifyResponse(BaseModel):
     verdict: str
     action: str
     risk_score: int
     reasons: list
     signals: list
+    layers: LayerScores
     merchant: MerchantOut
     processing_ms: float
 
@@ -76,11 +90,16 @@ def verify(req: VerifyRequest):
             detail="Merchant ID tidak ditemukan dalam payload",
         )
 
-    # Akurasi GPS buruk membuat jangkar tidak dapat dipercaya.
+    # Akurasi GPS buruk membuat jangkar tidak dapat dipercaya, jadi
+    # Layer 1 tidak dijalankan sama sekali (invarian §6).
+    #
+    # Sinyal STRUKTURAL Layer 2 tetap berlaku: cacat bentuk payload sama
+    # sekali tidak bergantung pada GPS, dan mengabaikannya berarti
+    # membuang bukti yang masih sehat. Sinyal perilaku dimatikan
+    # (state=None) karena jangkarnya justru yang tidak bisa dipercaya.
     if req.accuracy_m and req.accuracy_m > 100:
-        elapsed = (time.perf_counter() - started) * 1000
-        return VerifyResponse(
-            verdict=bd.UNKNOWN,
+        low = bd.Verdict(
+            status=bd.UNKNOWN,
             action=bd.WARN,
             risk_score=40,
             reasons=[
@@ -88,6 +107,17 @@ def verify(req: VerifyRequest):
                 f"verifikasi lokasi tidak dapat dilakukan"
             ],
             signals=["low_gps_accuracy"],
+        )
+        struktural = bh.evaluate(parsed, state=None)
+        low = bd.compose(low, struktural)
+        elapsed = (time.perf_counter() - started) * 1000
+        return VerifyResponse(
+            verdict=low.status,
+            action=low.action,
+            risk_score=low.risk_score,
+            reasons=low.reasons,
+            signals=low.signals,
+            layers=LayerScores(location=40, behavior=struktural.score),
             merchant=MerchantOut(
                 nmid=nmid,
                 name=parsed.merchant_name,
@@ -100,8 +130,10 @@ def verify(req: VerifyRequest):
 
     nearby = store.nearby(req.lat, req.lng)
     elsewhere = store.by_nmid(nmid)
+    anchor_id, anchor_nmid, anchor_state = store.anchor_state(req.lat, req.lng)
 
-    verdict = bd.evaluate(
+    # Layer 1 — ikatan merchant-lokasi.
+    lokasi = bd.evaluate(
         nmid=nmid,
         lat=req.lat,
         lng=req.lng,
@@ -109,6 +141,15 @@ def verify(req: VerifyRequest):
         same_nmid_elsewhere=elsewhere,
         crc_valid=parsed.crc_valid,
     )
+
+    # Layer 2 — perilaku artefak QR.
+    perilaku = bh.evaluate(
+        parsed,
+        state=anchor_state,
+        nmid_matches_anchor=(anchor_nmid is not None and anchor_nmid == nmid),
+    )
+
+    verdict = bd.compose(lokasi, perilaku)
 
     # Pengamatan dicatat hanya kalau tidak terindikasi anomali,
     # supaya stiker palsu tidak ikut membangun reputasi.
@@ -120,6 +161,11 @@ def verify(req: VerifyRequest):
             device_anon_id=req.device_anon_id,
             merchant_name=parsed.merchant_name,
         )
+    elif anchor_id is not None:
+        # Jangkar ini jadi sasaran. Dicatat sebagai PERCOBAAN, bukan
+        # pengamatan: observer_count tidak disentuh, jadi invarian §3
+        # tetap utuh — reputasi palsu tidak bisa dibangun dari sini.
+        store.note_anomaly(anchor_id)
 
     elapsed = (time.perf_counter() - started) * 1000
 
@@ -129,6 +175,7 @@ def verify(req: VerifyRequest):
         risk_score=verdict.risk_score,
         reasons=verdict.reasons,
         signals=verdict.signals,
+        layers=LayerScores(location=lokasi.risk_score, behavior=perilaku.score),
         merchant=MerchantOut(
             nmid=nmid,
             name=parsed.merchant_name,
