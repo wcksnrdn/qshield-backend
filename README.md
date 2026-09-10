@@ -31,6 +31,7 @@ python tests/test_binding.py
 python tests/test_invariants.py               # kunci regresi kedelapan invarian
 python tests/test_adversarial.py              # 13 skenario dari sisi penyerang
 python tests/test_hardening.py                # input, auth, rate limit, audit, konkurensi
+python tests/test_contract.py                 # kunci bentuk API v1
 PYTHONPATH=scripts python tests/test_api.py   # test_api.py mengimpor scripts/seed.py
 
 python scripts/calibrate_geo.py               # kalibrasi presisi geohash
@@ -183,6 +184,9 @@ Tiga sifat yang disengaja:
 Untuk demo lokal jalankan dengan `QSHIELD_AUTH=off`.
 
 ## Endpoint
+
+Kontrak lengkap beserta kebijakan versinya ada di [`API.md`](API.md),
+dan dikunci oleh `tests/test_contract.py`.
 
 ```
 GET  /api/v1/health
