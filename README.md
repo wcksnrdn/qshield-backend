@@ -146,6 +146,7 @@ Semua lewat env var, semuanya punya nilai bawaan yang aman:
 | `QSHIELD_RATE_WINDOW` | `60` | panjang jendela (detik) |
 | `QSHIELD_LOG_LEVEL` | `INFO` | level audit log |
 | `QSHIELD_VENUE_FIXTURE` | `venue.json` | berkas rekaman koordinat |
+| `QSHIELD_DEVICE_SALT` | *(dibangkitkan sekali, disimpan di basis data)* | garam untuk `device_ref`; harus stabil — mengubahnya membuat pengamat lama terhitung ulang |
 
 Di WiFi acara yang ber-NAT seluruh ruangan terlihat sebagai satu alamat —
 kalau rate limit mulai menolak permintaan sah saat gladi bersih, jalankan

@@ -8,7 +8,9 @@ Catatan privasi — ini keputusan desain, bukan detail teknis:
   - tidak ada kolom user_id di mana pun
   - tabel observations tidak menyimpan koordinat, sehingga tidak
     bisa dipakai merekonstruksi pergerakan seseorang
-  - device_anon_id hanya dipakai untuk menghitung pengamat unik
+  - device_anon_id TIDAK PERNAH disimpan apa adanya; yang masuk tabel
+    adalah hash yang dilingkupi per-binding, sehingga baris pengamatan
+    tidak bisa dirangkai antar-lokasi menjadi jejak perjalanan
 
 Agregat Layer 2 (anomaly_attempts) menempel pada baris
 BINDING, bukan pada device. Isinya hitungan dan waktu, bukan siapa —
@@ -16,6 +18,9 @@ tidak ada baris per-device baru dan tidak ada koordinat tambahan, jadi
 tidak ada jejak pergerakan yang bisa direkonstruksi darinya.
 """
 
+import hashlib
+import os
+import secrets
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -42,17 +47,36 @@ CREATE TABLE IF NOT EXISTS bindings (
     UNIQUE (nmid, geohash_7)
 );
 
+-- device_ref = sha256(salt || binding_id || device_anon_id)
+--
+-- Dilingkupi per-binding DENGAN SENGAJA. Perangkat yang sama
+-- menghasilkan nilai berbeda di tiap binding, sehingga:
+--   - dedup per binding tetap bekerja (itu satu-satunya yang dibutuhkan)
+--   - baris TIDAK BISA dirangkai antar-binding jadi jejak perjalanan
+--
+-- Versi sebelumnya menyimpan device_anon_id apa adanya, dan satu JOIN ke
+-- bindings sudah cukup untuk memulihkan koordinat lengkap plus urutan
+-- waktu satu perangkat. Klaim "tidak dapat dipakai merekonstruksi
+-- pergerakan" jadi tidak benar. Sekarang benar.
 CREATE TABLE IF NOT EXISTS observations (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     binding_id      INTEGER NOT NULL REFERENCES bindings(id),
-    device_anon_id  TEXT    NOT NULL,
+    device_ref      TEXT    NOT NULL,
     observed_at     TEXT    NOT NULL,
-    UNIQUE (binding_id, device_anon_id)
+    UNIQUE (binding_id, device_ref)
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_bindings_gh7  ON bindings(geohash_7);
 CREATE INDEX IF NOT EXISTS idx_bindings_nmid ON bindings(nmid);
 """
+
+
+SALT_KEY = "device_salt"
 
 
 def _iso(dt: datetime) -> str:
@@ -102,7 +126,42 @@ class Store:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.executescript(SCHEMA)
+        self._salt = self._ensure_salt()
         self._migrate()
+
+    def _ensure_salt(self) -> str:
+        """Garam untuk device_ref, stabil sepanjang umur basis data.
+
+        Diambil dari QSHIELD_DEVICE_SALT kalau disetel; kalau tidak,
+        dibangkitkan sekali lalu disimpan. Harus stabil — mengubahnya
+        membuat hash lama tidak lagi cocok, sehingga perangkat yang
+        pernah tercatat terhitung ulang sebagai pengamat baru.
+
+        Garamnya tidak menyembunyikan apa pun dari pemegang basis data;
+        yang mencegah perangkaian jejak adalah pelingkupan per-binding.
+        Garam menambah lapisan terhadap komputasi awal (precomputation).
+        """
+        dari_env = os.environ.get("QSHIELD_DEVICE_SALT", "").strip()
+        if dari_env:
+            return dari_env
+
+        baris = self.conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (SALT_KEY,)).fetchone()
+        if baris:
+            return baris["value"]
+
+        garam = secrets.token_hex(16)
+        self.conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+            (SALT_KEY, garam))
+        baris = self.conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (SALT_KEY,)).fetchone()
+        return baris["value"]
+
+    def device_ref(self, binding_id: int, device_anon_id: str) -> str:
+        """Rujukan perangkat yang hanya berlaku di dalam satu binding."""
+        bahan = f"{self._salt}|{binding_id}|{device_anon_id}".encode("utf-8")
+        return hashlib.sha256(bahan).hexdigest()
 
     def _migrate(self):
         """Tambahkan kolom agregat Layer 2 ke database lama.
@@ -121,6 +180,47 @@ class Store:
             if nama not in ada:
                 self.conn.execute(
                     f"ALTER TABLE bindings ADD COLUMN {nama} {tipe}")
+
+        self._migrate_device_ref()
+
+    def _migrate_device_ref(self):
+        """Ganti kolom device_anon_id lama dengan device_ref berlingkup.
+
+        Basis data lama menyimpan pengenal perangkat apa adanya, dan itu
+        bisa di-JOIN jadi jejak perjalanan. Nilai lamanya di-hash di
+        tempat lalu kolomnya dibuang — bukan sekadar berhenti dipakai,
+        karena data yang masih ada tetap bisa dibaca siapa pun yang
+        memegang berkasnya.
+        """
+        kolom = {c["name"] for c in
+                 self.conn.execute("PRAGMA table_info(observations)").fetchall()}
+        if "device_anon_id" not in kolom:
+            return
+
+        lama = self.conn.execute(
+            "SELECT id, binding_id, device_anon_id, observed_at "
+            "FROM observations").fetchall()
+
+        self.conn.execute("""
+            CREATE TABLE observations_baru (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                binding_id  INTEGER NOT NULL REFERENCES bindings(id),
+                device_ref  TEXT    NOT NULL,
+                observed_at TEXT    NOT NULL,
+                UNIQUE (binding_id, device_ref)
+            )""")
+        for r in lama:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO observations_baru
+                   (id, binding_id, device_ref, observed_at)
+                   VALUES (?, ?, ?, ?)""",
+                (r["id"], r["binding_id"],
+                 self.device_ref(r["binding_id"], r["device_anon_id"]),
+                 r["observed_at"]),
+            )
+        self.conn.execute("DROP TABLE observations")
+        self.conn.execute(
+            "ALTER TABLE observations_baru RENAME TO observations")
 
     def close(self):
         with self._lock:
@@ -241,12 +341,14 @@ class Store:
                 ).fetchone()
                 binding_id = row["id"]
 
-                # Satu device hanya dihitung sekali per binding.
+                # Satu device hanya dihitung sekali per binding. Yang
+                # disimpan adalah rujukan berlingkup, bukan pengenalnya.
                 inserted = self.conn.execute(
                     """INSERT OR IGNORE INTO observations
-                       (binding_id, device_anon_id, observed_at)
+                       (binding_id, device_ref, observed_at)
                        VALUES (?, ?, ?)""",
-                    (binding_id, device_anon_id, waktu),
+                    (binding_id, self.device_ref(binding_id, device_anon_id),
+                     waktu),
                 ).rowcount
 
                 if inserted:

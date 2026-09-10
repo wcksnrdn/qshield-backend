@@ -131,7 +131,7 @@ bukan sekadar gangguan UX.
 
 | # | Ancaman | Aktor | Mitigasi | Bukti |
 |---|---|---|---|---|
-| T15 | Basis data dipakai merekonstruksi pergerakan orang | P4 | Tidak ada `user_id` di skema mana pun; `observations` tidak menyimpan koordinat. Yang disimpan **ikatan**, bukan **kunjungan** | `test_invariants.py` #8 |
+| T15 | Basis data dipakai merekonstruksi pergerakan orang | P4 | Tidak ada `user_id` di skema mana pun; `observations` tidak menyimpan koordinat **dan** menyimpan rujukan perangkat yang dilingkupi per-binding, sehingga barisnya tidak bisa dirangkai antar-lokasi | `test_invariants.py` #8 — menjalankan tiga serangan, bukan memeriksa nama kolom |
 | T16 | Jejak audit membocorkan apa yang tidak dibocorkan skema | P4 | Log tidak pernah memuat `device_anon_id`, koordinat presisi, IP, atau payload mentah. Lokasi dicatat sebagai sel ~152 m | `test_hardening.py` "Audit log tidak memuat identitas" |
 | T17 | Alamat IP tersimpan lewat rate limiter | P4 | Kunci = hash SHA-256 terpotong, hanya di memori, hilang saat jendela lewat | `test_hardening.py` "Rate limit tidak menyimpan alamat IP" |
 | T18 | Agregat Layer 2 diam-diam memperkenalkan pelacakan | P4 | Agregat menempel pada baris **binding**, bukan device: hitungan dan waktu, bukan siapa | `test_invariants.py` #8 (skema diperiksa ulang tiap run) |
@@ -285,13 +285,27 @@ diam-diam:
 
 1. **Tidak ada `user_id` di skema mana pun.** Bukan "tidak dipakai",
    melainkan tidak ada kolomnya.
-2. **`observations` tidak menyimpan koordinat.** Tabel itu hanya
-   menghubungkan binding dengan `device_anon_id`. Tanpa koordinat per
-   pengamatan, tidak ada deret waktu-tempat yang bisa dirangkai.
-   Koordinat hanya ada pada `bindings`, yaitu properti lokasi **merchant**.
+2. **`observations` tidak menyimpan koordinat, DAN barisnya tidak bisa
+   dirangkai.** Yang kedua penting: tanpa koordinat pun, menyimpan
+   pengenal perangkat apa adanya membuat satu JOIN ke `bindings` cukup
+   untuk memulihkan jejak perjalanan lengkap. Karena itu yang disimpan
+   adalah `device_ref = sha256(garam || binding_id || device_anon_id)`,
+   **dilingkupi per-binding** — perangkat yang sama menghasilkan nilai
+   berbeda di tiap lokasi, sehingga dedup tetap bekerja tapi perangkaian
+   tidak mungkin. Koordinat hanya ada pada `bindings`, yaitu properti
+   lokasi **merchant**.
 3. **Agregat Layer 2 menempel pada binding, bukan device.** Konsekuensi
    yang diterima sadar: Q-Shield tidak bisa mendeteksi perjalanan
-   mustahil per perangkat.
+   mustahil per perangkat — mitigasi terkuat yang tersedia untuk R1.
+   Pertukaran itu diambil dengan mata terbuka.
+
+**Sisa risiko yang disebut terus terang.** Pihak yang sudah mengetahui
+sebuah `device_anon_id` masih bisa menghitung rujukannya di tiap binding
+dan menguji keberadaannya. Pihak itu adalah PJP yang menerbitkan
+pengenal tersebut, dan PJP sudah mengetahui transaksi penggunanya
+sendiri — jadi tidak ada paparan baru. Yang hilang adalah kemampuan
+siapa pun yang memegang basis data Q-Shield untuk memakainya sebagai
+alat pelacak.
 
 Kalimat yang meringkas seluruhnya: **yang disimpan adalah ikatan, bukan
 kunjungan.**
@@ -302,9 +316,13 @@ UU PDP — dan justru berbagi itulah yang membuat lapisan ini bekerja,
 karena stiker penipu tidak berhenti di batas satu penyelenggara.
 
 **Cara membuktikannya, bukan mengklaimnya.** `test_invariants.py` #8
-membaca skema langsung lewat `PRAGMA table_info` setiap kali dijalankan
-dan gagal kalau ada kolom beraroma identitas atau koordinat di
-`observations`. `test_hardening.py` melakukan hal setara untuk log.
+tidak berhenti di membaca nama kolom — versi yang berhenti di situ
+pernah meloloskan kebocoran nyata, dan pemeriksaan yang memberi rasa
+aman palsu lebih berbahaya daripada tidak ada pemeriksaan. Sekarang ia
+menjalankan serangannya: JOIN memakai pengenal mentah, perangkaian baris
+antar-lokasi lewat `device_ref`, dan penghitungan rujukan dari pengenal
+yang sudah diketahui penyerang. Ketiganya harus gagal, dan dedup harus
+tetap utuh. `test_hardening.py` melakukan hal setara untuk log.
 Pertanyaan "bagaimana kalian membuktikan tidak menyimpan identitas
 pengguna" dijawab dengan menjalankan dua berkas itu.
 

@@ -23,6 +23,7 @@ os.environ["QSHIELD_AUTH"] = "off"
 
 import math
 import random
+import sqlite3
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -330,7 +331,7 @@ def _inv8():
     ).fetchall()
 
     terlarang = ("user_id", "user", "phone", "msisdn", "email", "nik",
-                 "account_id", "customer", "name_holder")
+                 "account_id", "customer", "name_holder", "device_anon_id")
     temuan = []
     kolom_total = 0
     for (tabel,) in [(r["name"],) for r in rows]:
@@ -338,23 +339,89 @@ def _inv8():
             kolom_total += 1
             nama = col["name"].lower()
             for kata in terlarang:
-                # device_anon_id sengaja dikecualikan: penghitung pengamat
-                # unik, bukan identitas — lihat Keputusan 6.
-                if kata in nama and nama != "device_anon_id":
+                if kata in nama:
                     temuan.append(f"{tabel}.{col['name']}")
 
     assert not temuan, f"kolom beraroma identitas pengguna: {temuan}"
 
-    # Observations tidak boleh menyimpan koordinat — kalau menyimpan,
-    # tabel itu bisa dipakai merekonstruksi pergerakan orang.
+    # Observations tidak boleh menyimpan koordinat.
     obs = [c["name"].lower() for c in
            s.conn.execute("PRAGMA table_info(observations)").fetchall()]
     for geo_col in ("lat", "lng", "latitude", "longitude", "geohash"):
         assert not any(geo_col in c for c in obs), (
             f"observations.{geo_col} ada — jejak pergerakan bisa direkonstruksi"
         )
+
+    # --- Serangan sungguhan, bukan sekadar memeriksa nama kolom -------
+    #
+    # Versi lama pemeriksaan ini berhenti di atas, dan itu memberi rasa
+    # aman palsu: skema boleh terlihat bersih sementara satu JOIN tetap
+    # memulihkan jejak perjalanan. Sekarang serangannya dijalankan.
+    tempat = [
+        ("ID1000000000001", "warung dekat rumah", -6.914744, 107.609810),
+        ("ID1000000000002", "kopi dekat kantor", -6.902000, 107.618500),
+        ("ID1000000000003", "resto mall", -6.925000, 107.640000),
+        ("ID1000000000004", "apotek", -6.930000, 107.650000),
+    ]
+    korban = "budi-hp-anon-001"
+    for nmid, nama, lat, lng in tempat:
+        s.record(nmid=nmid, lat=lat, lng=lng, device_anon_id=korban,
+                 merchant_name=nama, now=NOW)
+
+    # Serangan A: JOIN memakai pengenal perangkat mentah.
+    try:
+        s.conn.execute(
+            "SELECT 1 FROM observations WHERE device_anon_id = ?", (korban,)
+        ).fetchall()
+        raise AssertionError(
+            "device_anon_id masih tersimpan apa adanya — satu JOIN ke "
+            "bindings memulihkan koordinat lengkap plus urutan waktu"
+        )
+    except sqlite3.OperationalError:
+        pass
+
+    # Serangan B: rangkai baris antar-lokasi lewat device_ref.
+    #
+    # Penyerang yang MENGETAHUI pengenal perangkat pun tidak boleh bisa
+    # merangkainya, karena rujukannya dilingkupi per-binding.
+    baris = s.conn.execute(
+        "SELECT binding_id, device_ref FROM observations").fetchall()
+    per_ref = {}
+    for r in baris:
+        per_ref.setdefault(r["device_ref"], set()).add(r["binding_id"])
+    banyak = {k: v for k, v in per_ref.items() if len(v) > 1}
+    assert not banyak, (
+        f"{len(banyak)} device_ref muncul di lebih dari satu binding — "
+        f"jejak perjalanan masih bisa dirangkai"
+    )
+
+    # Serangan C: hitung sendiri rujukannya dari pengenal yang diketahui,
+    # lalu cari di seluruh tabel. Harus cocok di paling banyak satu baris
+    # per binding, dan nilainya harus berbeda di tiap binding.
+    ids = [r["id"] for r in s.conn.execute("SELECT id FROM bindings")]
+    dihitung = {s.device_ref(bid, korban) for bid in ids}
+    assert len(dihitung) == len(ids), (
+        "satu perangkat menghasilkan rujukan yang sama di binding berbeda"
+    )
+
+    # Dedup — satu-satunya fungsi yang memang dibutuhkan — harus utuh.
+    sebelum = s.conn.execute(
+        "SELECT observer_count c FROM bindings WHERE nmid = ?",
+        (tempat[0][0],)).fetchone()["c"]
+    for _ in range(5):
+        s.record(nmid=tempat[0][0], lat=tempat[0][2], lng=tempat[0][3],
+                 device_anon_id=korban, merchant_name=tempat[0][1], now=NOW)
+    sesudah = s.conn.execute(
+        "SELECT observer_count c FROM bindings WHERE nmid = ?",
+        (tempat[0][0],)).fetchone()["c"]
+    assert sebelum == sesudah == 1, (
+        f"dedup rusak: {sebelum} -> {sesudah}, harusnya tetap 1"
+    )
+
     s.close()
-    return f"{kolom_total} kolom diperiksa, {len(rows)} tabel, nihil identitas"
+    return (f"{kolom_total} kolom, {len(rows)} tabel; serangan JOIN, "
+            f"perangkaian antar-lokasi, dan penghitungan rujukan "
+            f"semuanya gagal; dedup utuh")
 
 
 # --- Laporan -------------------------------------------------------

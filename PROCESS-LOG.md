@@ -165,6 +165,13 @@ Yang diterapkan:
 - `device_anon_id` hanya untuk menghitung pengamat unik, bukan identitas.
 - Yang disimpan adalah **ikatan**, bukan **kunjungan**.
 
+> **Koreksi (Keputusan 24).** Klaim "tidak dapat dipakai merekonstruksi
+> pergerakan" pada butir kedua di atas **tidak benar** sampai 10
+> September 2026. `observations` memang tidak menyimpan koordinat, tapi
+> ia menyimpan `device_anon_id` apa adanya — dan satu JOIN ke `bindings`
+> memulihkan koordinat lengkap beserta urutan waktunya. Lihat
+> Keputusan 24 untuk perbaikannya.
+
 Desain ini juga yang memungkinkan berbagi data antar-PJP tanpa melanggar
 kerahasiaan bank maupun UU PDP.
 
@@ -678,6 +685,68 @@ Konsekuensi kontrak: klien wajib mengirim `accuracy_m`. Geolocation API
 browser selalu memberikan `coords.accuracy` bersama koordinatnya, jadi
 klien mana pun sudah memegangnya — tapi ini perubahan kontrak, dan
 frontend perlu tahu.
+
+---
+
+## Keputusan 24 — Klaim privasi dibuat benar, bukan sekadar ditulis
+
+Ditemukan saat menyiapkan mitigasi R1. Rencananya mengusulkan deteksi
+perjalanan mustahil per perangkat sebagai proposal privasi — lalu
+ketahuan datanya sudah ada di sana sejak awal, tanpa pernah diputuskan.
+
+**Klaim yang ternyata salah.** Keputusan 6 dan `THREAT-MODEL.md` §7
+menyatakan `observations` tidak dapat dipakai merekonstruksi pergerakan
+seseorang, dengan alasan tabel itu tidak menyimpan koordinat. Alasannya
+benar, kesimpulannya tidak:
+
+```sql
+SELECT o.observed_at, b.lat, b.lng, b.merchant_name
+FROM observations o JOIN bindings b ON b.id = o.binding_id
+WHERE o.device_anon_id = 'budi-hp-anon-001'
+ORDER BY o.observed_at
+```
+
+Koordinat penuh, berurutan waktu, satu perangkat. Persis jejak yang
+skema ini dirancang untuk tidak bisa hasilkan.
+
+Yang membuatnya lebih buruk: `test_invariants.py` #8 ikut lolos. Ia
+memeriksa nama kolom dan memastikan `observations` tidak punya kolom
+koordinat — dan berhenti di situ. Pemeriksaan yang memberi rasa aman
+palsu lebih berbahaya daripada tidak ada pemeriksaan sama sekali.
+
+**Perbaikannya.** `device_anon_id` tidak lagi disimpan apa adanya. Yang
+masuk tabel adalah `device_ref = sha256(garam || binding_id ||
+device_anon_id)` — **dilingkupi per-binding dengan sengaja**:
+
+- perangkat yang sama menghasilkan nilai **berbeda** di tiap binding
+- dedup per binding tetap bekerja, dan itu satu-satunya fungsi yang
+  memang dibutuhkan
+- baris tidak bisa dirangkai antar-binding jadi jejak perjalanan
+
+Basis data lama ikut dimigrasi: nilai lamanya di-hash di tempat lalu
+kolomnya dibuang. Berhenti memakai kolom tidak cukup — data yang masih
+ada tetap terbaca oleh siapa pun yang memegang berkasnya.
+
+**Invarian #8 sekarang diuji dengan menyerangnya**, bukan dengan
+membaca nama kolom: JOIN memakai pengenal mentah, perangkaian baris
+antar-lokasi lewat `device_ref`, dan penghitungan rujukan dari pengenal
+yang sudah diketahui penyerang. Ketiganya harus gagal, dan dedup harus
+tetap utuh.
+
+**Sisa risiko, disebut terus terang.** Pihak yang SUDAH mengetahui
+sebuah `device_anon_id` masih bisa menghitung rujukannya di tiap binding
+dan menguji keberadaannya. Pihak itu adalah PJP yang menerbitkan
+pengenal tersebut — dan PJP sudah tahu transaksi penggunanya sendiri,
+jadi Q-Shield tidak menambah paparan baru di sana. Yang hilang adalah
+kemampuan siapa pun yang memegang basis data Q-Shield untuk memakainya
+sebagai alat pelacak.
+
+**Konsekuensi untuk R1.** Perbaikan ini menutup pintu deteksi perjalanan
+mustahil per perangkat dari data tersimpan — mitigasi terkuat yang
+tersedia untuk mock location. Itu pertukaran yang diambil sadar:
+privasi yang benar-benar berlaku lebih berharga daripada satu sinyal
+anti-fraud tambahan, terutama karena klaim privasi inilah yang dipakai
+menjawab Kaspersky dan yang memungkinkan berbagi data antar-PJP.
 
 ---
 
