@@ -64,6 +64,28 @@ W_ANOMALY_CAP = 30
 # Pertahanan yang benar untuk probing otomatis adalah rate limiting,
 # bukan skor risiko.
 
+# --- Klaim lokasi --------------------------------------------------
+#
+# Koordinat dan akurasi datang dari klien, dan server tidak punya cara
+# memverifikasinya (R1). Yang BISA diperiksa adalah apakah klaimnya
+# masuk akal secara fisik — pembohong yang malas sering lupa berbohong
+# dengan konsisten.
+#
+# GNSS ponsel konsumen tidak pernah melaporkan radius keyakinan di bawah
+# satu meter; yang terbaik pun berhenti di sekitar 3 m, dan itu butuh
+# dual-frequency di bawah langit terbuka. Nilai 0 sama sekali mustahil.
+# Ambang 1,0 m sengaja dipasang jauh di bawah kemampuan perangkat asli
+# supaya nyaris tidak mungkin menandai pemindaian sah.
+MIN_PLAUSIBLE_ACCURACY_M = 1.0
+W_IMPLAUSIBLE_ACCURACY = 45
+
+# Catatan: "akurasi tidak dikirim" pernah jadi sinyal risiko di sini dan
+# sudah DIBUANG. Menghukum absennya sebuah field sambil mendeklarasikan
+# field itu opsional adalah desain yang tidak koheren — dan absennya
+# membuka pintu keluar dari invarian §6, yang terlalu serius untuk
+# diselesaikan dengan menambah skor. Sekarang accuracy_m wajib, dan
+# permintaan tanpanya ditolak 422 di batas sistem.
+
 # NMID QRIS: "ID" + 13 digit.
 NMID_LENGTH = 15
 NMID_PREFIX = "ID"
@@ -111,6 +133,30 @@ class BehaviorResult:
             "reasons": self.reasons,
             "hard_violation": self.hard_violation,
         }
+
+
+def _location_claim_signals(accuracy_m, has_coords: bool) -> list:
+    """Sinyal dari klaim lokasi, tanpa memercayai isinya.
+
+    Tidak satu pun sinyal di sini membuktikan koordinatnya benar — itu
+    mustahil dari sisi server (R1). Yang diperiksa hanya apakah klaimnya
+    konsisten dengan perangkat yang sungguh-sungguh ada.
+    """
+    out = []
+    if not has_coords or accuracy_m is None:
+        return out
+
+    if accuracy_m < MIN_PLAUSIBLE_ACCURACY_M:
+        out.append(Signal(
+            name="implausible_accuracy",
+            weight=W_IMPLAUSIBLE_ACCURACY,
+            reason=(
+                f"Akurasi lokasi {accuracy_m:.2f} m berada di bawah batas "
+                f"fisik GNSS ponsel — nilai ini tidak berasal dari "
+                f"penerima sungguhan"
+            ),
+        ))
+    return out
 
 
 def _structural_signals(parsed) -> list:
@@ -225,6 +271,8 @@ def evaluate(
     state: Optional[AnchorState] = None,
     nmid_matches_anchor: bool = False,
     now: Optional[datetime] = None,
+    accuracy_m: Optional[float] = None,
+    has_coords: bool = False,
 ) -> BehaviorResult:
     """Nilai perilaku satu pemindaian.
 
@@ -233,10 +281,13 @@ def evaluate(
     nmid_matches_anchor  True bila NMID yang dipindai adalah pemilik sah
                          jangkar ini (mematikan sinyal yang bisa
                          disalahgunakan untuk menyerang merchant jujur)
+    accuracy_m           akurasi yang DIKLAIM klien, tidak dipercaya
+    has_coords           True bila permintaan memang menyertakan koordinat
     """
     now = now or datetime.now(timezone.utc)
 
     signals = (_structural_signals(parsed)
+               + _location_claim_signals(accuracy_m, has_coords)
                + _behavioral_signals(state, nmid_matches_anchor, now))
 
     # Sidik jari encoding dibatasi bersama-sama: sekumpulan sinyal lemah

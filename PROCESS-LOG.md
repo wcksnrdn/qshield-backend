@@ -644,6 +644,43 @@ koordinatnya dipalsukan di balik PJP yang sah.
 
 ---
 
+## Keputusan 23 — R1 dipersempit dari sisi server; accuracy_m jadi wajib
+
+R1 (mock location) tidak bisa ditutup dari sisi server — server tidak
+punya cara memverifikasi koordinat yang diklaim klien, dan penutupannya
+menuntut deteksi integritas perangkat lewat SDK native. Yang bisa
+dikerjakan adalah mempersempitnya.
+
+**Sinyal baru: akurasi yang mustahil secara fisik.** GNSS ponsel
+konsumen tidak pernah melaporkan radius keyakinan di bawah satu meter;
+yang terbaik pun berhenti di sekitar 3 m. Ambang 1,0 m sengaja dipasang
+jauh di bawah kemampuan perangkat asli supaya nyaris mustahil menandai
+pemindaian sah. Diuji: 0-0,99 m ditandai, 1-99 m lolos bersih.
+
+Ini menangkap pemalsu yang mengarang angka tanpa memikirkan apakah
+angkanya mungkin — dan itu memang kelas penyerang yang nyata.
+
+**`accuracy_m` sekarang WAJIB.** Ini temuan yang lebih penting daripada
+sinyalnya. Selama field itu opsional, ada pintu keluar dari invarian §8
+— eh, §6 — yang menganga: penyerang yang akurasinya buruk cukup tidak
+mengirimkannya, dan pemeriksaan ">100 m" tidak pernah berjalan. Suite
+adversarial punya skenario "akurasi dipalsukan tinggi" tapi tidak punya
+"akurasi dihilangkan".
+
+Sempat dicoba menutupnya sebagai sinyal risiko (`accuracy_missing`, +15)
+dan itu keliru dua kali: menghukum absennya sebuah field sambil
+mendeklarasikan field itu opsional adalah desain yang tidak koheren,
+dan sebuah pintu keluar dari invarian terlalu serius untuk diselesaikan
+dengan menambah skor. Sekarang absennya ditolak `422` di batas sistem,
+tempat kontrak masukan memang seharusnya ditegakkan.
+
+Konsekuensi kontrak: klien wajib mengirim `accuracy_m`. Geolocation API
+browser selalu memberikan `coords.accuracy` bersama koordinatnya, jadi
+klien mana pun sudah memegangnya — tapi ini perubahan kontrak, dan
+frontend perlu tahu.
+
+---
+
 ## Hasil pengujian
 
 ```

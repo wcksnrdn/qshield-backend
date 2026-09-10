@@ -188,6 +188,11 @@ GET  /api/v1/health
 POST /api/v1/verify
 ```
 
+Seluruh field **wajib**. `accuracy_m` khususnya: tanpa tahu seberapa
+bagus fix GPS-nya, jangkar tidak bisa dinilai sama sekali — dan kalau
+field itu opsional, penyerang yang akurasinya buruk tinggal tidak
+mengirimkannya untuk melewati invarian §6.
+
 Contoh permintaan:
 
 ```json

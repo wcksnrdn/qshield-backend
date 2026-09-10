@@ -28,10 +28,9 @@ QR_PALSU = seed.make_qr(seed.PENIPU["nmid"], seed.PENIPU["pan"], seed.PENIPU["na
 LAT, LNG = seed.WARUNG["lat"], seed.WARUNG["lng"]
 
 
-def call(payload, lat=LAT, lng=LNG, device="demo-device-0001", acc=None):
-    body = {"payload": payload, "lat": lat, "lng": lng, "device_anon_id": device}
-    if acc is not None:
-        body["accuracy_m"] = acc
+def call(payload, lat=LAT, lng=LNG, device="demo-device-0001", acc=12.0):
+    body = {"payload": payload, "lat": lat, "lng": lng,
+            "device_anon_id": device, "accuracy_m": acc}
     return client.post("/api/v1/verify", json=body)
 
 

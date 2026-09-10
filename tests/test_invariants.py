@@ -166,7 +166,7 @@ def _inv3():
     for i in range(8):
         r = client.post("/api/v1/verify", json={
             "payload": make_qr(FAKE, "936000149000000002"),
-            "lat": LAT, "lng": LNG,
+            "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
             "device_anon_id": f"attacker-{i:04d}",
         })
         verdicts.append(r.json()["verdict"])

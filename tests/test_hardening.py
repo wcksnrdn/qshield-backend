@@ -75,7 +75,7 @@ def qr(nmid=NMID, pan="936000149000000001"):
 
 def kirim(c, **ganti):
     body = {"payload": qr(), "lat": LAT, "lng": LNG,
-            "device_anon_id": "demo-device-0001"}
+            "device_anon_id": "demo-device-0001", "accuracy_m": 12.0}
     body.update(ganti)
     return c.post("/api/v1/verify", json=body)
 
@@ -335,12 +335,12 @@ def _t1():
                           ("kunci hampir benar",
                            {auth.API_KEY_HEADER: KUNCI_UJI[:-1] + "X"})):
         r = c.post("/api/v1/verify", json={
-            "payload": qr(), "lat": LAT, "lng": LNG,
+            "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
             "device_anon_id": "demo-device-0001"}, headers=header)
         assert r.status_code == 401, f"{label} -> HTTP {r.status_code}"
 
     r = c.post("/api/v1/verify", json={
-        "payload": qr(), "lat": LAT, "lng": LNG,
+        "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
         "device_anon_id": "demo-device-0001"},
         headers={auth.API_KEY_HEADER: KUNCI_UJI})
     assert r.status_code == 200, f"kunci benar ditolak: {r.status_code}"
@@ -351,7 +351,7 @@ def _t1():
 def _t2():
     c = siapkan(clients=auth.ClientRegistry(spec="", auth_setting=""))
     r = c.post("/api/v1/verify", json={
-        "payload": qr(), "lat": LAT, "lng": LNG,
+        "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
         "device_anon_id": "demo-device-0001"},
         headers={auth.API_KEY_HEADER: KUNCI_UJI})
     assert r.status_code == 503, (
@@ -374,7 +374,7 @@ def _t3():
     try:
         for kunci in (bocoran, KUNCI_UJI):
             c.post("/api/v1/verify", json={
-                "payload": qr(), "lat": LAT, "lng": LNG,
+                "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
                 "device_anon_id": "demo-device-0001"},
                 headers={auth.API_KEY_HEADER: kunci})
     finally:
@@ -411,7 +411,7 @@ def _t4():
 def _t5():
     c = siapkan(clients=REGISTRY_UJI)
     c.post("/api/v1/verify", json={
-        "payload": qr(), "lat": LAT, "lng": LNG,
+        "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
         "device_anon_id": "demo-device-0001"},
         headers={auth.API_KEY_HEADER: KUNCI_UJI})
 
@@ -436,7 +436,7 @@ def _t6():
     kode = []
     for i in range(8):
         r = c.post("/api/v1/verify", json={
-            "payload": qr(), "lat": LAT, "lng": LNG,
+            "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
             "device_anon_id": f"kuota-{i:04d}"},
             headers={auth.API_KEY_HEADER: KUNCI_UJI})
         kode.append(r.status_code)
@@ -462,7 +462,7 @@ def _k1():
     def kirim(i):
         try:
             r = c.post("/api/v1/verify", json={
-                "payload": qr(), "lat": LAT, "lng": LNG,
+                "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
                 "device_anon_id": f"paralel-{i:04d}"})
             if r.status_code != 200:
                 galat.append(f"HTTP {r.status_code}")
@@ -498,7 +498,7 @@ def _k2():
 
     def kirim():
         c.post("/api/v1/verify", json={
-            "payload": qr(), "lat": LAT, "lng": LNG,
+            "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
             "device_anon_id": "device-yang-sama"})
 
     utas = [threading.Thread(target=kirim) for _ in range(50)]
@@ -524,7 +524,7 @@ def _k3():
 
     def kirim(i):
         c.post("/api/v1/verify", json={
-            "payload": qr(), "lat": LAT, "lng": LNG,
+            "payload": qr(), "lat": LAT, "lng": LNG, "accuracy_m": 12.0,
             "device_anon_id": f"beban-{i:04d}"})
 
     utas = [threading.Thread(target=kirim, args=(i,)) for i in range(N)]

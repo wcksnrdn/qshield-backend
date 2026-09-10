@@ -80,11 +80,15 @@ def qr(nmid, pan="936000149000000002", extra=None, nama="WARUNG BU SRI",
     return emvco.build(fields)
 
 
-def scan(client, payload, lat=LAT, lng=LNG, device="penyerang-0001", acc=None):
+# Klien sungguhan selalu punya coords.accuracy dari Geolocation API,
+# jadi helper ini pun mengirimkannya secara bawaan.
+AKURASI_WAJAR = 12.0
+
+
+def scan(client, payload, lat=LAT, lng=LNG, device="penyerang-0001",
+         acc=AKURASI_WAJAR):
     body = {"payload": payload, "lat": lat, "lng": lng,
-            "device_anon_id": device}
-    if acc is not None:
-        body["accuracy_m"] = acc
+            "device_anon_id": device, "accuracy_m": acc}
     return client.post("/api/v1/verify", json=body).json()
 
 
@@ -246,6 +250,44 @@ def _a10():
     return "payload bersih tidak menurunkan skor maupun mencabut anomaly"
 
 
+@serangan("Akurasi GPS dikarang di bawah batas fisik perangkat")
+def _a12():
+    _, c = fresh_store()
+    # Pemalsu yang mengarang angka sering lupa bahwa angkanya harus
+    # mungkin. GNSS ponsel tidak pernah melaporkan radius di bawah 1 m.
+    for acc in (0, 0.1, 0.5, 0.99):
+        d = scan(c, qr(KORBAN, pan="936000149000000001"),
+                 device="pemalsu-akurasi", acc=acc)
+        assert "implausible_accuracy" in d["signals"], (
+            f"akurasi {acc} m lolos tanpa sinyal"
+        )
+        assert d["verdict"] != "verified", f"akurasi {acc} m tetap verified"
+
+    # Akurasi yang wajar tidak boleh ikut tertandai.
+    for acc in (1.0, 3, 8, 25, 99):
+        d = scan(c, qr(KORBAN, pan="936000149000000001"),
+                 device="pengguna-jujur", acc=acc)
+        assert "implausible_accuracy" not in d["signals"], (
+            f"akurasi wajar {acc} m ditandai palsu"
+        )
+    return "0-0,99 m ditandai; 1-99 m lolos bersih"
+
+
+@serangan("Akurasi dihilangkan untuk melewati invarian akurasi GPS")
+def _a13():
+    _, c = fresh_store()
+    # Kalau accuracy_m opsional, penyerang yang fix-nya buruk tinggal
+    # tidak mengirimkannya dan pemeriksaan ">100 m" tidak pernah jalan.
+    r = c.post("/api/v1/verify", json={
+        "payload": qr(KORBAN, pan="936000149000000001"),
+        "lat": LAT, "lng": LNG, "device_anon_id": "penyembunyi-01"})
+    assert r.status_code == 422, (
+        f"permintaan tanpa accuracy_m diterima (HTTP {r.status_code}) — "
+        f"pintu keluar dari invarian §6 terbuka"
+    )
+    return "permintaan tanpa accuracy_m ditolak 422 di batas sistem"
+
+
 # ==================================================================
 # Batasan yang diakui — di sini yang diuji adalah KEJUJURAN sistem
 # ==================================================================
@@ -328,6 +370,44 @@ def _a11():
     )
     return (f"basis {bd.MIN_OBSERVERS} vs 47 tidak lagi lolos sebagai "
             f"merchant bersebelahan (rasio {bd.ADJACENT_MIN_RATIO})")
+
+
+@serangan("Akurasi GPS dikarang di bawah batas fisik perangkat")
+def _a12():
+    _, c = fresh_store()
+    # Pemalsu yang mengarang angka sering lupa bahwa angkanya harus
+    # mungkin. GNSS ponsel tidak pernah melaporkan radius di bawah 1 m.
+    for acc in (0, 0.1, 0.5, 0.99):
+        d = scan(c, qr(KORBAN, pan="936000149000000001"),
+                 device="pemalsu-akurasi", acc=acc)
+        assert "implausible_accuracy" in d["signals"], (
+            f"akurasi {acc} m lolos tanpa sinyal"
+        )
+        assert d["verdict"] != "verified", f"akurasi {acc} m tetap verified"
+
+    # Akurasi yang wajar tidak boleh ikut tertandai.
+    for acc in (1.0, 3, 8, 25, 99):
+        d = scan(c, qr(KORBAN, pan="936000149000000001"),
+                 device="pengguna-jujur", acc=acc)
+        assert "implausible_accuracy" not in d["signals"], (
+            f"akurasi wajar {acc} m ditandai palsu"
+        )
+    return "0-0,99 m ditandai; 1-99 m lolos bersih"
+
+
+@serangan("Akurasi dihilangkan untuk melewati invarian akurasi GPS")
+def _a13():
+    _, c = fresh_store()
+    # Kalau accuracy_m opsional, penyerang yang fix-nya buruk tinggal
+    # tidak mengirimkannya dan pemeriksaan ">100 m" tidak pernah jalan.
+    r = c.post("/api/v1/verify", json={
+        "payload": qr(KORBAN, pan="936000149000000001"),
+        "lat": LAT, "lng": LNG, "device_anon_id": "penyembunyi-01"})
+    assert r.status_code == 422, (
+        f"permintaan tanpa accuracy_m diterima (HTTP {r.status_code}) — "
+        f"pintu keluar dari invarian §6 terbuka"
+    )
+    return "permintaan tanpa accuracy_m ditolak 422 di batas sistem"
 
 
 # ==================================================================

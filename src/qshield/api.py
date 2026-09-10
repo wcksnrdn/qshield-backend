@@ -193,7 +193,15 @@ class VerifyRequest(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
         description="Pengenal acak per perangkat, bukan identitas pengguna",
     )
-    accuracy_m: Optional[float] = Field(None, ge=0, le=MAX_ACCURACY_M)
+    # WAJIB, bukan opsional. Menjadikannya opsional membuka pintu keluar
+    # dari invarian §6: penyerang yang akurasinya buruk tinggal tidak
+    # mengirimkannya, dan pemeriksaan ">100 m" tidak pernah berjalan.
+    #
+    # Tanpa tahu seberapa bagus fix-nya, jangkar tidak bisa dinilai sama
+    # sekali — jadi ini bukan sinyal risiko melainkan syarat masuk.
+    # Geolocation API browser selalu memberikan coords.accuracy bersama
+    # koordinatnya, jadi klien mana pun sudah memegangnya.
+    accuracy_m: float = Field(..., ge=0, le=MAX_ACCURACY_M)
 
     # Jalur cadangan demo. GPS di dalam gedung kerap melaporkan akurasi
     # >100 m, dan invarian §6 akan menolak memberi putusan — sistemnya
@@ -284,7 +292,7 @@ def verify(req: VerifyRequest, request: Request):
     # sekali tidak bergantung pada GPS, dan mengabaikannya berarti
     # membuang bukti yang masih sehat. Sinyal perilaku dimatikan
     # (state=None) karena jangkarnya justru yang tidak bisa dipercaya.
-    if req.accuracy_m and req.accuracy_m > 100:
+    if req.accuracy_m > 100:
         low = bd.Verdict(
             status=bd.UNKNOWN,
             action=bd.WARN,
@@ -295,7 +303,8 @@ def verify(req: VerifyRequest, request: Request):
             ],
             signals=["low_gps_accuracy"],
         )
-        struktural = bh.evaluate(parsed, state=None)
+        struktural = bh.evaluate(parsed, state=None,
+                                 accuracy_m=req.accuracy_m, has_coords=True)
         low = _tandai_replay(bd.compose(low, struktural), req)
         elapsed = round((time.perf_counter() - started) * 1000, 2)
         audit.record_verdict(
@@ -349,6 +358,8 @@ def verify(req: VerifyRequest, request: Request):
         parsed,
         state=anchor_state,
         nmid_matches_anchor=pemilik_sah,
+        accuracy_m=req.accuracy_m,
+        has_coords=True,
     )
 
     verdict = _tandai_replay(bd.compose(lokasi, perilaku), req)
