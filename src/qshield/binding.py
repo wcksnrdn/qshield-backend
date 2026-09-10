@@ -1,0 +1,273 @@
+"""
+Logika binding merchant-lokasi.
+
+Jangkar ditentukan oleh JARAK, bukan oleh kesamaan sel geohash.
+Geohash presisi 7 dipakai semata sebagai indeks untuk mempersempit
+query; sel presisi 7 berukuran ~152 x 153 m sehingga sel itu
+ditambah 8 tetangganya dijamin mencakup seluruh titik dalam
+radius 100 m (diverifikasi di calibrate_geo.py).
+
+Memakai kesamaan geohash sebagai jangkar adalah kesalahan:
+sel presisi 8 hanya setinggi 19 m, sehingga dua pemindaian di
+warung yang sama kerap jatuh di sel berbeda.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from . import geo
+
+# --- Parameter yang bisa dikalibrasi -------------------------------
+
+ANCHOR_RADIUS_M = 50        # dua pemindaian dianggap satu jangkar
+INDEX_PRECISION = 7         # presisi geohash untuk indeks query
+AREA_PRECISION = 6          # presisi untuk deteksi sebaran antar-area
+SCATTER_MIN_KM = 1.0        # jarak minimum agar dianggap area berbeda
+
+MIN_OBSERVERS = 3           # device unik sebelum binding dianggap mapan
+MIN_AGE_HOURS = 24          # rentang minimal pengamatan pertama ke terakhir
+SCATTER_MIN_AREAS = 2       # jumlah area lain yang memicu alarm sebaran
+STALE_DAYS = 90             # binding tak terlihat selama ini dianggap usang
+
+VERIFIED = "verified"
+UNKNOWN = "unknown"
+ANOMALY = "anomaly"
+
+PROCEED = "proceed"
+WARN = "warn"
+STEP_UP = "step_up"
+COOLING_OFF = "cooling_off"
+
+THRESHOLDS = [(25, PROCEED), (50, WARN), (75, STEP_UP)]
+
+
+@dataclass
+class Binding:
+    """Satu pasangan (merchant, jangkar lokasi) yang pernah diamati."""
+
+    nmid: str
+    lat: float
+    lng: float
+    geohash_7: str = ""
+    geohash_6: str = ""
+    merchant_name: Optional[str] = None
+    observer_count: int = 0
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
+
+    def __post_init__(self):
+        if not self.geohash_7:
+            self.geohash_7 = geo.encode(self.lat, self.lng, INDEX_PRECISION)
+        if not self.geohash_6:
+            self.geohash_6 = geo.encode(self.lat, self.lng, AREA_PRECISION)
+
+    @property
+    def age_hours(self) -> float:
+        if not self.first_seen or not self.last_seen:
+            return 0.0
+        return (self.last_seen - self.first_seen).total_seconds() / 3600
+
+    @property
+    def is_established(self) -> bool:
+        return (
+            self.observer_count >= MIN_OBSERVERS
+            and self.age_hours >= MIN_AGE_HOURS
+        )
+
+    def is_stale(self, now: datetime) -> bool:
+        if not self.last_seen:
+            return False
+        return (now - self.last_seen) > timedelta(days=STALE_DAYS)
+
+    def distance_m(self, lat: float, lng: float) -> float:
+        return geo.haversine_m(self.lat, self.lng, lat, lng)
+
+    def at_same_anchor(self, lat: float, lng: float,
+                       radius_m: float = ANCHOR_RADIUS_M) -> bool:
+        return self.distance_m(lat, lng) <= radius_m
+
+
+@dataclass
+class Verdict:
+    status: str
+    action: str
+    risk_score: int
+    reasons: list = field(default_factory=list)
+    signals: list = field(default_factory=list)
+    matched_binding: Optional[Binding] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "verdict": self.status,
+            "action": self.action,
+            "risk_score": self.risk_score,
+            "reasons": self.reasons,
+            "signals": self.signals,
+        }
+
+
+def index_cells(lat: float, lng: float) -> list:
+    """Sel geohash yang harus dicari untuk menemukan binding di sekitar."""
+    return geo.neighbors(geo.encode(lat, lng, INDEX_PRECISION))
+
+
+def _action_for(score: int) -> str:
+    for limit, action in THRESHOLDS:
+        if score <= limit:
+            return action
+    return COOLING_OFF
+
+
+def _distinct_areas(bindings: list, lat: float, lng: float) -> list:
+    """Kelompokkan binding jadi area yang benar-benar berjauhan.
+
+    Mencegah satu lokasi dihitung berkali-kali hanya karena
+    koordinatnya bergeser sedikit antar pengamatan.
+    """
+    clusters = []
+    for b in sorted(bindings, key=lambda x: -x.observer_count):
+        if b.distance_m(lat, lng) <= SCATTER_MIN_KM * 1000:
+            continue
+        if any(
+            geo.haversine_m(b.lat, b.lng, c.lat, c.lng) <= SCATTER_MIN_KM * 1000
+            for c in clusters
+        ):
+            continue
+        clusters.append(b)
+    return clusters
+
+
+def evaluate(
+    nmid: str,
+    lat: float,
+    lng: float,
+    nearby: list,
+    same_nmid_elsewhere: list,
+    crc_valid: bool = True,
+    now: Optional[datetime] = None,
+) -> Verdict:
+    """Nilai satu pemindaian.
+
+    nearby               binding hasil query indeks di sekitar titik ini,
+                         belum disaring jarak
+    same_nmid_elsewhere  binding dengan NMID sama di mana pun
+    """
+    now = now or datetime.now(timezone.utc)
+    score = 0
+    reasons = []
+    signals = []
+
+    if not crc_valid:
+        return Verdict(
+            status=ANOMALY,
+            action=COOLING_OFF,
+            risk_score=95,
+            reasons=["Checksum QR tidak valid — kode kemungkinan dicetak ulang"],
+            signals=["crc_invalid"],
+        )
+
+    # Saring berdasarkan jarak sebenarnya, bukan kesamaan sel.
+    at_anchor = [b for b in nearby if b.at_same_anchor(lat, lng)]
+    current = next((b for b in at_anchor if b.nmid == nmid), None)
+    others = [b for b in at_anchor if b.nmid != nmid]
+
+    # --- Sinyal 1: NMID berubah di jangkar yang sudah mapan ---------
+    conflicting = [b for b in others if b.is_established and not b.is_stale(now)]
+    if conflicting:
+        strongest = max(conflicting, key=lambda b: b.observer_count)
+        # Bobot naik seiring kekuatan bukti: binding dengan 40+ pengamat
+        # adalah bukti jauh lebih kuat daripada yang baru mencapai ambang.
+        confidence = min(25, strongest.observer_count // 2)
+
+        # Pertukaran stiker berarti binding lama berhenti terlihat.
+        # Kalau NMID yang discan JUGA sudah mapan dan masih aktif,
+        # keduanya hidup berdampingan — ciri merchant bersebelahan
+        # (ruko, food court), bukan penggantian.
+        coexisting = current is not None and current.is_established
+
+        if coexisting:
+            score += 20
+            signals.append("adjacent_merchant")
+            reasons.append(
+                f"Terdapat merchant lain dalam radius "
+                f"{strongest.distance_m(lat, lng):.0f} m yang juga aktif "
+                f"— kemungkinan lokasi bersebelahan"
+            )
+        else:
+            score += 60 + confidence
+            signals.append("nmid_changed_at_anchor")
+            reasons.append(
+                f"Merchant ID berbeda dari {strongest.observer_count} pengamatan "
+                f"sebelumnya di lokasi ini"
+            )
+            if strongest.merchant_name:
+                reasons.append(
+                    f"Lokasi ini konsisten terdaftar sebagai "
+                    f"{strongest.merchant_name}"
+                )
+
+    # --- Sinyal 2: satu NMID tersebar di banyak area ----------------
+    elsewhere = [
+        b for b in same_nmid_elsewhere
+        if b.distance_m(lat, lng) > SCATTER_MIN_KM * 1000
+    ]
+    areas = _distinct_areas(elsewhere, lat, lng)
+    if len(areas) >= SCATTER_MIN_AREAS:
+        score += 60
+        signals.append("nmid_scatter")
+        farthest = max(areas, key=lambda b: b.distance_m(lat, lng))
+        reasons.append(
+            f"Merchant ID yang sama terdeteksi di {len(areas) + 1} area berbeda, "
+            f"terjauh {farthest.distance_m(lat, lng) / 1000:.0f} km — "
+            f"pola khas stiker yang disebar"
+        )
+    elif len(areas) == 1:
+        score += 25
+        signals.append("nmid_second_location")
+        reasons.append(
+            f"Merchant ID ini juga tercatat di lokasi lain berjarak "
+            f"{areas[0].distance_m(lat, lng) / 1000:.1f} km"
+        )
+
+    # --- Riwayat jangkar ini sendiri --------------------------------
+    if current and current.is_established:
+        if not conflicting and not areas:
+            score = max(0, score - 20)
+        signals.append("established_binding")
+        reasons.append(
+            f"Konsisten dengan {current.observer_count} pengamatan sebelumnya "
+            f"di lokasi ini"
+        )
+    elif current:
+        score += 15
+        signals.append("young_binding")
+        reasons.append(
+            f"Binding baru — baru {current.observer_count} pengamatan, "
+            f"belum cukup untuk diverifikasi"
+        )
+    elif not conflicting:
+        score += 35
+        signals.append("first_observation")
+        reasons.append("Lokasi ini belum pernah tercatat sebelumnya")
+
+    score = max(0, min(100, score))
+
+    if "nmid_changed_at_anchor" in signals or "nmid_scatter" in signals:
+        status = ANOMALY
+    elif current and current.is_established and score <= 25:
+        status = VERIFIED
+    else:
+        status = UNKNOWN
+
+    if not reasons:
+        reasons.append("Belum ada cukup data untuk memverifikasi lokasi ini")
+
+    return Verdict(
+        status=status,
+        action=_action_for(score),
+        risk_score=score,
+        reasons=reasons,
+        signals=signals,
+        matched_binding=current,
+    )
