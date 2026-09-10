@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Basis data demo — dibuat ulang oleh scripts/seed.py, jangan di-commit
+# supaya tiap kalibrasi venue tidak jadi noise di git.
+qshield.db
+
+# Prop QR hasil scripts/make_qr.py
+props/

@@ -9,6 +9,16 @@ dependencies = [
     "pydantic",
 ]
 
+[project.optional-dependencies]
+# Hanya dibutuhkan scripts/make_qr.py untuk mencetak dan memverifikasi
+# prop fisik. Sengaja dipisah supaya layanan tidak ikut menyeret OpenCV.
+props = [
+    "qrcode",
+    "pillow",
+    "opencv-python-headless",
+    "numpy",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

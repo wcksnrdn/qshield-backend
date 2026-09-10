@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: qshield
-Version: 0.1.0
-Summary: Verifikasi ikatan merchant-lokasi QRIS sebelum PIN entry.
-Requires-Python: >=3.10
-Requires-Dist: fastapi
-Requires-Dist: uvicorn
-Requires-Dist: pydantic
