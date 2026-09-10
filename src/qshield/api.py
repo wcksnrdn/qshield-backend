@@ -143,10 +143,18 @@ def verify(req: VerifyRequest):
     )
 
     # Layer 2 — perilaku artefak QR.
+    # "Pemilik sah jangkar" diambil dari putusan Layer 1, bukan dari
+    # tebakan siapa binding dominan di sini. Bedanya nyata di food court:
+    # jangkar dominan bisa milik Toko A, tapi pelanggan yang memindai QR
+    # Toko B yang sama-sama mapan juga berhak tidak kena sinyal serangan
+    # yang ditujukan ke tetangganya.
+    pemilik_sah = (lokasi.matched_binding is not None
+                   and lokasi.matched_binding.is_established)
+
     perilaku = bh.evaluate(
         parsed,
         state=anchor_state,
-        nmid_matches_anchor=(anchor_nmid is not None and anchor_nmid == nmid),
+        nmid_matches_anchor=pemilik_sah,
     )
 
     verdict = bd.compose(lokasi, perilaku)

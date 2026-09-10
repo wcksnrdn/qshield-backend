@@ -28,7 +28,7 @@ diserahkan lewat AnchorState supaya aturannya bisa diuji tanpa I/O.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 # --- Parameter yang bisa dikalibrasi -------------------------------
@@ -54,10 +54,15 @@ SOFT_FINGERPRINT_CAP = 25
 W_ANOMALY_BASE = 12
 W_ANOMALY_CAP = 30
 
-# Lonjakan pemindaian di satu jangkar.
-SCAN_BURST_WINDOW_MIN = 60
-SCAN_BURST_THRESHOLD = 12
-W_SCAN_BURST = 20
+# Sinyal "lonjakan pemindaian" pernah ada di sini dan sudah DIBUANG.
+# calibrate_layer2.py menunjukkan alasannya: membangun reputasi palsu
+# hanya butuh MIN_OBSERVERS=3 device dalam rentang MIN_AGE_HOURS=24 jam,
+# jadi serangannya pelan — puncaknya 3 pemindaian. Ambang mana pun yang
+# masih bisa ditoleransi warung laris (>=120/jam) melewatkan 100%
+# serangan, sementara ambang yang cukup rendah untuk menangkapnya
+# menandai 100% merchant sibuk. Volume tidak memisahkan keduanya.
+# Pertahanan yang benar untuk probing otomatis adalah rate limiting,
+# bukan skor risiko.
 
 # NMID QRIS: "ID" + 13 digit.
 NMID_LENGTH = 15
@@ -82,17 +87,6 @@ class AnchorState:
 
     anomaly_attempts: int = 0
     last_anomaly_at: Optional[datetime] = None
-    scan_window_start: Optional[datetime] = None
-    scan_window_count: int = 0
-
-    def scans_in_window(self, now: datetime) -> int:
-        """Pemindaian dalam jendela berjalan; 0 kalau jendelanya sudah lewat."""
-        if not self.scan_window_start:
-            return 0
-        umur = now - self.scan_window_start
-        if umur > timedelta(minutes=SCAN_BURST_WINDOW_MIN):
-            return 0
-        return self.scan_window_count
 
 
 @dataclass
@@ -220,18 +214,6 @@ def _behavioral_signals(state: Optional[AnchorState], nmid_matches_anchor: bool,
             reason=(
                 f"Lokasi ini sudah {state.anomaly_attempts} kali menjadi "
                 f"sasaran pemindaian yang ditolak"
-            ),
-        ))
-
-    # --- Lonjakan pemindaian ----------------------------------------
-    scans = state.scans_in_window(now)
-    if scans >= SCAN_BURST_THRESHOLD:
-        out.append(Signal(
-            name="scan_burst_at_anchor",
-            weight=W_SCAN_BURST,
-            reason=(
-                f"{scans} pemindaian dalam {SCAN_BURST_WINDOW_MIN} menit "
-                f"terakhir di lokasi ini — jauh di atas pola wajar"
             ),
         ))
 

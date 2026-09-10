@@ -10,7 +10,7 @@ Catatan privasi — ini keputusan desain, bukan detail teknis:
     bisa dipakai merekonstruksi pergerakan seseorang
   - device_anon_id hanya dipakai untuk menghitung pengamat unik
 
-Agregat Layer 2 (anomaly_attempts, scan_window_*) menempel pada baris
+Agregat Layer 2 (anomaly_attempts) menempel pada baris
 BINDING, bukan pada device. Isinya hitungan dan waktu, bukan siapa —
 tidak ada baris per-device baru dan tidak ada koordinat tambahan, jadi
 tidak ada jejak pergerakan yang bisa direkonstruksi darinya.
@@ -38,8 +38,6 @@ CREATE TABLE IF NOT EXISTS bindings (
     last_seen       TEXT    NOT NULL,
     anomaly_attempts   INTEGER NOT NULL DEFAULT 0,
     last_anomaly_at    TEXT,
-    scan_window_start  TEXT,
-    scan_window_count  INTEGER NOT NULL DEFAULT 0,
     UNIQUE (nmid, geohash_7)
 );
 
@@ -102,8 +100,6 @@ class Store:
         tambahan = {
             "anomaly_attempts": "INTEGER NOT NULL DEFAULT 0",
             "last_anomaly_at": "TEXT",
-            "scan_window_start": "TEXT",
-            "scan_window_count": "INTEGER NOT NULL DEFAULT 0",
         }
         for nama, tipe in tambahan.items():
             if nama not in ada:
@@ -162,8 +158,6 @@ class Store:
         return dipilih["id"], dipilih["nmid"], bh.AnchorState(
             anomaly_attempts=dipilih["anomaly_attempts"],
             last_anomaly_at=_parse(dipilih["last_anomaly_at"]),
-            scan_window_start=_parse(dipilih["scan_window_start"]),
-            scan_window_count=dipilih["scan_window_count"],
         )
 
     def stats(self) -> dict:
@@ -214,28 +208,6 @@ class Store:
                     "UPDATE bindings SET merchant_name = ? WHERE id = ?",
                     (merchant_name, binding_id),
                 )
-
-        # Jendela tetap untuk deteksi lonjakan: satu penghitung dan satu
-        # waktu mulai, direset begitu jendelanya lewat. Tidak menyimpan
-        # kapan tiap pemindaian terjadi, jadi tidak ada deret waktu yang
-        # bisa dipakai memprofilkan siapa pun.
-        mulai = _parse(row["scan_window_start"]) if row else None
-        lewat = (
-            mulai is None
-            or (now - mulai).total_seconds() / 60 > bh.SCAN_BURST_WINDOW_MIN
-        )
-        if lewat:
-            self.conn.execute(
-                """UPDATE bindings SET scan_window_start = ?, scan_window_count = 1
-                   WHERE id = ?""",
-                (_iso(now), binding_id),
-            )
-        else:
-            self.conn.execute(
-                """UPDATE bindings SET scan_window_count = scan_window_count + 1
-                   WHERE id = ?""",
-                (binding_id,),
-            )
 
         # Satu device hanya dihitung sekali per binding.
         inserted = self.conn.execute(
