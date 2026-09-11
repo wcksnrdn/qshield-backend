@@ -63,6 +63,7 @@ def record_verdict(
     merchant_name=None,
     location_source="live",
     client_id=None,
+    device_integrity="not_provided",
 ) -> dict:
     """Tulis satu baris audit. Mengembalikan dict yang ditulis (untuk test)."""
     from . import binding as bd
@@ -91,6 +92,9 @@ def record_verdict(
         # menjawab "putusan ini diminta siapa" saat diaudit, dan tidak
         # pernah masuk tabel bindings maupun observations.
         "client": client_id,
+        # Diaudit supaya bisa dibedakan putusan yang integritas
+        # perangkatnya diperiksa dari yang tidak pernah diperiksa.
+        "device_integrity": device_integrity,
         "processing_ms": processing_ms,
     }
     get_logger().info(json.dumps(entri, ensure_ascii=False))

@@ -86,6 +86,25 @@ W_IMPLAUSIBLE_ACCURACY = 45
 # diselesaikan dengan menambah skor. Sekarang accuracy_m wajib, dan
 # permintaan tanpanya ditolak 422 di batas sistem.
 
+# --- Integritas perangkat ------------------------------------------
+#
+# Diisi klien NATIVE; klien web tidak akan pernah bisa mengisinya karena
+# browser sengaja tidak membocorkan konfigurasi sistem ke halaman.
+#
+# Rantai kepercayaannya penting dan harus disebut terus terang: field
+# ini dilaporkan klien dan TIDAK BISA diverifikasi Q-Shield. Yang
+# membuatnya berarti adalah `attested` — hasil Play Integrity / App
+# Attest yang diverifikasi PJP di sisi mereka, lalu dipertanggungkan
+# lewat kunci API mereka. Jadi kami tidak memercayai perangkatnya; kami
+# memercayai PJP yang menyatakan sudah memeriksanya.
+#
+# Bobot mock_location tidak ada di sini: GPS yang diakui palsu membuat
+# jangkarnya tidak layak dinilai sama sekali, jadi ia ditangani seperti
+# akurasi buruk di api.py — menolak memberi putusan lokasi, bukan
+# menambah skor. Lihat invarian §6.
+W_DEVICE_ROOTED = 25
+W_ATTESTATION_FAILED = 30
+
 # NMID QRIS: "ID" + 13 digit.
 NMID_LENGTH = 15
 NMID_PREFIX = "ID"
@@ -154,6 +173,44 @@ def _location_claim_signals(accuracy_m, has_coords: bool) -> list:
                 f"Akurasi lokasi {accuracy_m:.2f} m berada di bawah batas "
                 f"fisik GNSS ponsel — nilai ini tidak berasal dari "
                 f"penerima sungguhan"
+            ),
+        ))
+    return out
+
+
+def _device_signals(integrity) -> list:
+    """Sinyal dari laporan integritas perangkat.
+
+    Ketiadaan laporan TIDAK diberi skor. Setiap klien web akan selalu
+    kosong di sini, dan menghukumnya berarti menghukum seluruh pengguna
+    web untuk sesuatu yang bukan kesalahan mereka — kesalahan yang sama
+    yang pernah dibuat lalu dicabut pada `accuracy_missing`.
+
+    Yang dilakukan sebagai gantinya: ketiadaannya DIUNGKAPKAN di
+    tanggapan (`device_integrity: "not_provided"`), supaya jelas
+    pemeriksaan itu tidak pernah dijalankan — bukan dijalankan lalu
+    lolos. Ketiadaan bukti bukan bukti ketiadaan, invarian §2.
+    """
+    if integrity is None:
+        return []
+
+    out = []
+    if getattr(integrity, "rooted", None) is True:
+        out.append(Signal(
+            name="device_rooted",
+            weight=W_DEVICE_ROOTED,
+            reason=(
+                "Perangkat dilaporkan sudah di-root atau di-jailbreak — "
+                "perlindungan sistem operasinya tidak lagi bisa diandalkan"
+            ),
+        ))
+    if getattr(integrity, "attested", None) is False:
+        out.append(Signal(
+            name="attestation_failed",
+            weight=W_ATTESTATION_FAILED,
+            reason=(
+                "Pemeriksaan keaslian perangkat tidak lolos — aplikasi atau "
+                "perangkatnya mungkin telah dimodifikasi"
             ),
         ))
     return out
@@ -273,6 +330,7 @@ def evaluate(
     now: Optional[datetime] = None,
     accuracy_m: Optional[float] = None,
     has_coords: bool = False,
+    integrity=None,
 ) -> BehaviorResult:
     """Nilai perilaku satu pemindaian.
 
@@ -283,11 +341,13 @@ def evaluate(
                          disalahgunakan untuk menyerang merchant jujur)
     accuracy_m           akurasi yang DIKLAIM klien, tidak dipercaya
     has_coords           True bila permintaan memang menyertakan koordinat
+    integrity            laporan integritas dari klien native, kalau ada
     """
     now = now or datetime.now(timezone.utc)
 
     signals = (_structural_signals(parsed)
                + _location_claim_signals(accuracy_m, has_coords)
+               + _device_signals(integrity)
                + _behavioral_signals(state, nmid_matches_anchor, now))
 
     # Sidik jari encoding dibatasi bersama-sama: sekumpulan sinyal lemah

@@ -197,6 +197,30 @@ async def header_keamanan(request: Request, call_next):
     return respons
 
 
+class DeviceIntegrity(BaseModel):
+    """Laporan integritas dari klien NATIVE.
+
+    Browser sengaja tidak membocorkan hal-hal ini ke halaman web, jadi
+    klien web akan selalu mengosongkannya. Itu bukan kekurangan yang
+    disembunyikan — ketiadaannya diungkapkan di tanggapan.
+
+    Rantai kepercayaannya: Q-Shield TIDAK bisa memverifikasi field ini.
+    Yang membuatnya berarti adalah `attested` — hasil Play Integrity
+    (Android) atau App Attest (iOS) yang diverifikasi PJP di sisi
+    mereka, lalu dipertanggungkan lewat kunci API mereka. Kami tidak
+    memercayai perangkatnya; kami memercayai PJP yang menyatakan sudah
+    memeriksanya.
+    """
+
+    mock_location: Optional[bool] = Field(
+        None, description="OS melaporkan lokasi berasal dari mock provider")
+    rooted: Optional[bool] = Field(
+        None, description="perangkat di-root / jailbreak")
+    attested: Optional[bool] = Field(
+        None, description="Play Integrity / App Attest lolos")
+    platform: Optional[Literal["android", "ios", "web", "other"]] = None
+
+
 class VerifyRequest(BaseModel):
     """Seluruh field divalidasi di batas sistem, bukan di dalam logika.
 
@@ -240,6 +264,9 @@ class VerifyRequest(BaseModel):
     location_source: Literal["live", "replay"] = Field(
         "live", description="'replay' bila koordinat berasal dari rekaman")
 
+    device_integrity: Optional[DeviceIntegrity] = Field(
+        None, description="diisi klien native; klien web mengosongkannya")
+
 
 class MerchantOut(BaseModel):
     nmid: Optional[str]
@@ -270,11 +297,28 @@ class VerifyResponse(BaseModel):
     layers: LayerScores
     merchant: MerchantOut
     location_source: str
+    # Pengungkapan, bukan skor: "not_provided" berarti pemeriksaan
+    # integritas TIDAK PERNAH DIJALANKAN — bukan dijalankan lalu lolos.
+    device_integrity: str
     processing_ms: float
 
 
 REPLAY_NOTICE = ("Koordinat diputar ulang dari rekaman lokasi — bukan GPS "
                  "langsung. Penilaian berjalan apa adanya.")
+
+MOCK_NOTICE = ("Sistem operasi melaporkan lokasi ini berasal dari mock "
+               "provider — jangkar tidak dapat dinilai")
+
+
+def _status_integritas(di) -> str:
+    """Ringkas laporan integritas jadi satu kata untuk tanggapan."""
+    if di is None:
+        return "not_provided"
+    if di.mock_location is True or di.rooted is True or di.attested is False:
+        return "failed"
+    if di.attested is True:
+        return "attested"
+    return "reported"
 
 
 def _tandai_replay(verdict, req):
@@ -401,6 +445,45 @@ def verify(req: VerifyRequest, request: Request):
             detail="Merchant ID tidak ditemukan dalam payload",
         )
 
+    di = req.device_integrity
+    status_integritas = _status_integritas(di)
+
+    # GPS yang DIAKUI palsu menempatkan kita di posisi yang sama persis
+    # dengan akurasi buruk: jangkarnya tidak layak dinilai. Ditangani
+    # dengan menolak memberi putusan lokasi, bukan dengan menambah skor —
+    # perlakuan yang sama seperti invarian §6, karena masalahnya sama.
+    #
+    # Bedanya satu: akurasi buruk itu nasib, mock location itu sengaja.
+    # Karena itu skor dasarnya lebih tinggi.
+    if di is not None and di.mock_location is True:
+        palsu = bd.Verdict(
+            status=bd.UNKNOWN, action=bd.STEP_UP, risk_score=65,
+            reasons=[MOCK_NOTICE], signals=["mock_location_reported"],
+        )
+        struktural = bh.evaluate(parsed, state=None,
+                                 accuracy_m=req.accuracy_m, has_coords=True)
+        palsu = _tandai_replay(bd.compose(palsu, struktural), req)
+        elapsed = round((time.perf_counter() - started) * 1000, 2)
+        audit.record_verdict(
+            palsu, nmid, req.lat, req.lng,
+            {"location": 65, "behavior": struktural.score},
+            elapsed, req.accuracy_m, parsed.merchant_name,
+            req.location_source, client_id,
+        )
+        return VerifyResponse(
+            verdict=palsu.status, action=palsu.action,
+            risk_score=palsu.risk_score, reasons=palsu.reasons,
+            signals=palsu.signals,
+            layers=LayerScores(location=65, behavior=struktural.score),
+            location_source=req.location_source,
+            device_integrity=status_integritas,
+            merchant=MerchantOut(
+                nmid=nmid, name=parsed.merchant_name,
+                city=parsed.merchant_city, criteria=parsed.criteria_label,
+                is_static=parsed.is_static),
+            processing_ms=elapsed,
+        )
+
     # Akurasi GPS buruk membuat jangkar tidak dapat dipercaya, jadi
     # Layer 1 tidak dijalankan sama sekali (invarian §6).
     #
@@ -420,14 +503,15 @@ def verify(req: VerifyRequest, request: Request):
             signals=["low_gps_accuracy"],
         )
         struktural = bh.evaluate(parsed, state=None,
-                                 accuracy_m=req.accuracy_m, has_coords=True)
+                                 accuracy_m=req.accuracy_m, has_coords=True,
+                                 integrity=di)
         low = _tandai_replay(bd.compose(low, struktural), req)
         elapsed = round((time.perf_counter() - started) * 1000, 2)
         audit.record_verdict(
             low, nmid, req.lat, req.lng,
             {"location": 40, "behavior": struktural.score},
             elapsed, req.accuracy_m, parsed.merchant_name,
-            req.location_source, client_id,
+            req.location_source, client_id, status_integritas,
         )
         return VerifyResponse(
             verdict=low.status,
@@ -437,6 +521,7 @@ def verify(req: VerifyRequest, request: Request):
             signals=low.signals,
             layers=LayerScores(location=40, behavior=struktural.score),
             location_source=req.location_source,
+            device_integrity=status_integritas,
             merchant=MerchantOut(
                 nmid=nmid,
                 name=parsed.merchant_name,
@@ -476,6 +561,7 @@ def verify(req: VerifyRequest, request: Request):
         nmid_matches_anchor=pemilik_sah,
         accuracy_m=req.accuracy_m,
         has_coords=True,
+        integrity=di,
     )
 
     verdict = _tandai_replay(bd.compose(lokasi, perilaku), req)
@@ -501,7 +587,7 @@ def verify(req: VerifyRequest, request: Request):
     audit.record_verdict(
         verdict, nmid, req.lat, req.lng, lapisan, elapsed,
         req.accuracy_m, parsed.merchant_name, req.location_source,
-        client_id,
+        client_id, status_integritas,
     )
 
     return VerifyResponse(
@@ -512,6 +598,7 @@ def verify(req: VerifyRequest, request: Request):
         signals=verdict.signals,
         layers=LayerScores(**lapisan),
         location_source=req.location_source,
+        device_integrity=status_integritas,
         merchant=MerchantOut(
             nmid=nmid,
             name=parsed.merchant_name,

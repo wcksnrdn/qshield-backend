@@ -127,6 +127,9 @@ bukan sekadar gangguan UX.
 | T13 | Putusan palsu dari GPS yang tidak layak dipercaya | P3 | `accuracy_m` > 100 m → menolak memberi putusan lokasi, `unknown` + alasan eksplisit | `test_invariants.py` #6 |
 | T28 | Akurasi dikarang di bawah batas fisik perangkat | P3 | GNSS ponsel tidak pernah melaporkan radius <1 m; nilai di bawah itu ditandai `implausible_accuracy` | `test_adversarial.py` "Akurasi GPS dikarang" |
 | T29 | `accuracy_m` dihilangkan untuk melewati T13 | P3 | Field ini **wajib**; absennya ditolak `422` di batas sistem, bukan diberi skor | `test_adversarial.py` "Akurasi dihilangkan" |
+| T32 | Perangkat di-root / aplikasi dimodifikasi | P3 | Dilaporkan klien native lewat `device_integrity`; `rooted` dan `attested: false` diberi skor | `test_contract.py` "Integritas perangkat opsional" |
+| T33 | GPS dipalsukan di perangkat yang melaporkan jujur | P3 | `mock_location: true` menolak memberi putusan lokasi sama sekali — perlakuan yang sama dengan akurasi buruk, karena masalahnya sama | `test_contract.py` "Integritas perangkat opsional" |
+| T34 | Klien berbohong soal integritasnya sendiri | P3 | Tidak bisa dicegah Q-Shield. `attested` bermakna hanya karena PJP memverifikasinya di sisi mereka dan mempertanggungkannya lewat kunci API — kepercayaan pada PJP, bukan pada perangkat | `INTEGRATION.md` §3 |
 | T14 | Sinyal yang menandai merchant sah sebagai penyerang | — | Konstanta wajib punya dasar empiris; sinyal yang gagal kalibrasi dibuang, bukan dipaksakan | `calibrate_layer2.py` — sinyal lonjakan pemindaian dibuang |
 
 ### 5.4 Terhadap privasi (A3)
@@ -165,7 +168,7 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 
 | # | Risiko residual | Kenapa belum ditahan | Rencana | Dampak nyata |
 |---|---|---|---|---|
-| R1 | **Mock location / GPS palsu** | Server tidak bisa memverifikasi koordinat yang diklaim klien. Mitigasi terkuat — perjalanan mustahil per perangkat — **ditutup dengan sengaja** demi privasi (lihat §7) | Deteksi integritas perangkat; butuh SDK native | **Dipersempit.** Akurasi yang mustahil secara fisik ditandai; `accuracy_m` wajib sehingga invarian §6 tidak bisa dilewati dengan menghilangkannya; spoof tetap tidak memberi keuntungan untuk NMID yang bukan milik penyerang |
+| R1 | **Mock location / GPS palsu** | Server tidak bisa memverifikasi koordinat. Klien WEB tidak bisa memeriksa integritas perangkat — browser sengaja tidak membocorkannya | **Slot protokolnya sudah ada**: `device_integrity` diisi klien native, dan PJP yang mengintegrasikan sudah punya aplikasi native | **Dipersempit jauh.** `mock_location: true` menolak putusan lokasi sama sekali; root & attestation gagal diberi skor; ketiadaan laporan diungkapkan (`not_provided`), tidak dianggap aman |
 | R2 | **Replay QR dinamis** | Tidak ada pelacakan nonce per transaksi; butuh keterlibatan PJP | Di luar jangkauan lapisan pra-pembayaran | Sistem tidak mengklaim bisa (diuji) |
 | R3 | **Merchant berjarak <15 m** | Presisi GPS tidak cukup memisahkan | Ambient WiFi fingerprinting; tidak tersedia lewat browser | Ditangani sebagian oleh `adjacent_merchant` |
 | R4 | ~~Cold start~~ **DITUTUP untuk merchant terdaftar** | — | PJP mendaftarkan ikatan merchant-lokasi; sisanya tetap `unknown` yang jujur | Merchant terdaftar `verified` seketika tanpa menunggu konsensus |

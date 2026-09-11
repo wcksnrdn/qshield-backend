@@ -1012,6 +1012,59 @@ re-seed di venue.
 
 ---
 
+## Keputusan 31 — Integritas perangkat: slotnya, bukan SDK-nya
+
+R1 selama ini dicatat sebagai "butuh SDK native", dan itu membingkai
+masalahnya keliru. Q-Shield bukan aplikasi pengguna akhir — ia lapisan
+yang **diintegrasikan PJP**. Dan PJP sudah punya aplikasi native.
+
+Jadi pemeriksaan integritas perangkat bukan pekerjaan kami. Yang kami
+butuhkan hanyalah **slot di protokol** supaya klien native bisa
+mengisinya:
+
+```json
+"device_integrity": {
+  "mock_location": false, "rooted": false,
+  "attested": true, "platform": "android"
+}
+```
+
+Ini mengubah jawaban pitch dari "kami belum bisa" menjadi "protokolnya
+sudah siap; klien web kami sendiri yang tidak bisa mengisinya, dan itu
+batasan klien web, bukan batasan sistemnya."
+
+**Rantai kepercayaannya disebut terus terang.** Q-Shield tidak bisa
+memverifikasi field ini — klien bisa berbohong. Yang membuatnya berarti
+adalah `attested`: hasil Play Integrity / App Attest yang diverifikasi
+PJP di server mereka sendiri, lalu dipertanggungkan lewat kunci API
+mereka. Kami tidak memercayai perangkatnya; kami memercayai PJP yang
+menyatakan sudah memeriksanya — dan kunci API itulah yang membuat
+pertanggungan itu punya nama.
+
+**`mock_location: true` menolak memberi putusan lokasi**, bukan menambah
+skor. Alasannya: GPS yang diakui palsu menempatkan kita di posisi yang
+persis sama dengan akurasi >100 m — jangkarnya tidak layak dinilai. Satu
+masalah, satu perlakuan. Bedanya cuma niat, dan itu tercermin di skor
+dasar yang lebih tinggi (65 vs 40).
+
+**Ketiadaan laporan TIDAK dihukum.** Ini pelajaran yang sudah dibayar
+sekali di Keputusan 23: `accuracy_missing` pernah dijadikan sinyal
+risiko dan itu keliru, karena menghukum sesuatu yang klien memang tidak
+bisa berikan. Setiap klien web akan selalu kosong di sini.
+
+Yang dilakukan sebagai gantinya: ketiadaannya **diungkapkan** lewat
+field `device_integrity: "not_provided"` di tanggapan dan di jejak
+audit. Artinya "pemeriksaan ini tidak pernah dijalankan" — bukan
+"dijalankan lalu lolos". Sama persis dengan pola `location_source`:
+pengungkapan, bukan skor.
+
+Panduan integrasinya ada di `INTEGRATION.md`, ditulis untuk dibaca
+tim engineering PJP — termasuk peringatan agar tidak mengirim
+`attested: true` sebelum benar-benar memverifikasinya, karena itu
+memindahkan risiko ke pengguna mereka sendiri.
+
+---
+
 ## Hasil pengujian
 
 ```

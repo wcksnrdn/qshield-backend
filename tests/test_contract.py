@@ -37,8 +37,13 @@ PERMINTAAN_WAJIB = {
 }
 PERMINTAAN_OPSIONAL = {
     "location_source",
+    # Ditambahkan 11 Sep 2026. ADITIF dan opsional dengan sengaja:
+    # klien web tidak akan pernah bisa mengisinya, dan menjadikannya
+    # wajib berarti mengunci seluruh klien web keluar.
+    "device_integrity",
 }
 PERMINTAAN_TIPE = {
+    "device_integrity": "object",
     "payload": "string",
     "lat": "number",
     "lng": "number",
@@ -56,6 +61,9 @@ TANGGAPAN_FIELD = {
     "layers": "object",
     "merchant": "object",
     "location_source": "string",
+    # Pengungkapan, bukan skor: "not_provided" berarti pemeriksaan
+    # integritas tidak pernah dijalankan, bukan dijalankan lalu lolos.
+    "device_integrity": "string",
     "processing_ms": "number",
 }
 
@@ -68,6 +76,7 @@ MERCHANT_FIELD = {"nmid", "name", "city", "criteria", "is_static"}
 VERDICT_SAH = {"verified", "unknown", "anomaly"}
 ACTION_SAH = {"proceed", "warn", "step_up", "cooling_off"}
 LOCATION_SOURCE_SAH = {"live", "replay"}
+INTEGRITAS_SAH = {"not_provided", "reported", "attested", "failed"}
 
 JALUR = {
     "/api/v1/health",
@@ -95,13 +104,20 @@ SKEMA = app.openapi()
 
 
 def _tipe(d: dict) -> str:
+    """Tipe efektif sebuah field di skema OpenAPI.
+
+    Field opsional bertipe objek muncul sebagai
+    `anyOf: [{$ref: ...}, {type: null}]`, jadi cabang `$ref` harus ikut
+    diperiksa — bukan hanya cabang yang punya `type`.
+    """
     if "type" in d:
         return d["type"]
     for kunci in ("anyOf", "allOf", "oneOf"):
-        if kunci in d:
-            for cabang in d[kunci]:
-                if cabang.get("type") and cabang["type"] != "null":
-                    return cabang["type"]
+        for cabang in d.get(kunci, []):
+            if "$ref" in cabang:
+                return "object"
+            if cabang.get("type") and cabang["type"] != "null":
+                return cabang["type"]
     if "$ref" in d:
         return "object"
     return "?"
@@ -214,6 +230,63 @@ def _k5():
             f"{len(LOCATION_SOURCE_SAH)} location_source")
 
 
+@cek("Integritas perangkat opsional, dan ketiadaannya diungkapkan")
+def _k5b():
+    import tempfile as _tf
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    from fastapi.testclient import TestClient as _TC
+
+    from qshield import api as _api, auth as _auth, emvco as _em
+    from qshield.limits import RateLimiter as _RL
+    from qshield.store import Store as _St
+
+    NOW = _dt.now(_tz.utc)
+    LAT, LNG, NMID = -6.914744, 107.609810, "ID1024365478912"
+    _api.store = _St(os.path.join(_tf.mkdtemp(), "integ.db"))
+    _api.clients = _auth.ClientRegistry(spec="", auth_setting="off")
+    _api.limiter = _RL(max_requests=10_000, window_seconds=60)
+    _api.store.seed_binding(
+        nmid=NMID, lat=LAT, lng=LNG, merchant_name="WARUNG BU SRI",
+        observer_count=47, first_seen=NOW - _td(days=180),
+        last_seen=NOW - _td(hours=6))
+    acct = _em.build_tlv({"00": "ID.CO.QRIS.WWW", "01": "936000149000000001",
+                          "02": NMID, "03": "UMI"})
+    payload = _em.build({"00": "01", "01": "11", "26": acct, "52": "5812",
+                         "53": "360", "58": "ID", "59": "W", "60": "B",
+                         "61": "40257"})
+    c = _TC(_api.app)
+
+    def minta(dev, di=None):
+        body = {"payload": payload, "lat": LAT, "lng": LNG,
+                "device_anon_id": dev, "accuracy_m": 9.0}
+        if di is not None:
+            body["device_integrity"] = di
+        return c.post("/api/v1/verify", json=body).json()
+
+    # Klien web tidak boleh dihukum untuk sesuatu yang browser memang
+    # tidak izinkan — kesalahan yang pernah dibuat pada accuracy_missing.
+    web = minta("kontrak-web-001")
+    assert web["device_integrity"] == "not_provided"
+    assert web["action"] == "proceed", (
+        f"klien web dihukum jadi {web['action']} karena tidak bisa melapor")
+
+    bersih = minta("kontrak-nat-001", {
+        "mock_location": False, "rooted": False, "attested": True,
+        "platform": "android"})
+    assert bersih["device_integrity"] == "attested"
+    assert bersih["action"] == "proceed"
+
+    # GPS yang diakui palsu: menolak memberi putusan lokasi, sama seperti
+    # akurasi buruk — masalahnya sama, jangkarnya tidak layak dinilai.
+    palsu = minta("kontrak-nat-002", {"mock_location": True, "attested": True})
+    assert palsu["verdict"] != "verified", f"mock GPS -> {palsu['verdict']}"
+    assert palsu["action"] in ("step_up", "cooling_off")
+    assert "mock_location_reported" in palsu["signals"]
+    assert palsu["device_integrity"] == "failed"
+    return "web tidak dihukum; attested lolos; mock GPS menolak putusan lokasi"
+
+
 @cek("Tanggapan sungguhan cocok dengan kontraknya")
 def _k6():
     import tempfile
@@ -252,6 +325,8 @@ def _k6():
     assert d["verdict"] in VERDICT_SAH, f"verdict asing: {d['verdict']}"
     assert d["action"] in ACTION_SAH, f"action asing: {d['action']}"
     assert d["location_source"] in LOCATION_SOURCE_SAH
+    assert d["device_integrity"] in INTEGRITAS_SAH, (
+        f"status integritas asing: {d['device_integrity']}")
     assert set(d["layers"]) == set(LAYERS_FIELD)
     assert set(d["merchant"]) == MERCHANT_FIELD
     assert isinstance(d["risk_score"], int) and 0 <= d["risk_score"] <= 100
