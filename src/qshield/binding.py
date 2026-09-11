@@ -21,6 +21,22 @@ from . import geo
 # --- Parameter yang bisa dikalibrasi -------------------------------
 
 ANCHOR_RADIUS_M = 50        # dua pemindaian dianggap satu jangkar
+
+# Jangkar dihaluskan sebagai rata-rata berjalan, bukan dibekukan pada
+# pembacaan pertama. Galat satu pembacaan GPS (sigma ~8 m) melekat
+# permanen kalau dibekukan; dirata-ratakan, galatnya turun sebagai
+# sigma/akar(n) — terukur 6,3 m menjadi 1,0 m pada 47 pengamatan.
+#
+# Batas geser ada karena penghalusan membuka serangan baru: pemindaian
+# dari tepi radius menarik titik tengah, dan begitu jangkarnya bergeser,
+# radius barunya menjangkau lebih jauh lagi. Penyerang berjalan menuntun
+# jangkar keluar dari warung.
+#
+# 20 m dipilih dari calibrate_anchor.py: titik benar sendiri bisa
+# berjarak ~16 m (2 sigma) dari pembacaan pertama, jadi batas di bawah
+# itu mengunci jangkar pada galat awalnya dan membuang seluruh
+# manfaatnya. Di atas itu, seretan tumbuh tanpa imbalan akurasi.
+ANCHOR_MAX_DRIFT_M = 20
 INDEX_PRECISION = 7         # presisi geohash untuk indeks query
 AREA_PRECISION = 6          # presisi untuk deteksi sebaran antar-area
 SCATTER_MIN_KM = 1.0        # jarak minimum agar dianggap area berbeda

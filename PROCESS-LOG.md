@@ -1132,6 +1132,65 @@ sekeras kodenya.
 
 ---
 
+## Keputusan 34 — Jangkar menajam seiring pengamatan
+
+Selama ini koordinat jangkar ditetapkan dari pengamatan **pertama** dan
+tidak pernah diperbarui. Galat satu pembacaan GPS melekat permanen, dan
+puluhan pengamatan berikutnya tidak dipakai memperbaikinya sama sekali.
+Terukur: setelah 47 pengamatan, jangkar masih meleset 6,9 m — sama
+buruknya dengan hari pertama.
+
+Ini janggal, karena seluruh mekanisme Q-Shield dibangun di atas gagasan
+bahwa banyak pengamatan independen lebih kuat daripada satu. Prinsip itu
+dipakai untuk `observer_count`, tapi tidak untuk koordinatnya sendiri.
+
+Sekarang jangkar adalah **rata-rata berjalan**. Galatnya turun sebagai
+sigma/akar(n):
+
+| pengamatan | jangkar beku | rata-rata berjalan | membaik |
+|---|---|---|---|
+| 3 | 6,6 m | 4,2 m | 1,6x |
+| 10 | 6,4 m | 2,3 m | 2,8x |
+| 47 | 6,3 m | 1,0 m | **6,3x** |
+| 100 | 6,3 m | 0,7 m | 9,3x |
+
+Ini langsung mempersempit R3 (merchant berjarak <15 m): jangkar dengan
+galat 1 m memisahkan dua lapak jauh lebih baik daripada jangkar dengan
+galat 6 m.
+
+**Penghalusan membuka serangan baru, dan itu dikalibrasi sebelum
+diterapkan.** Pemindaian dari tepi radius menarik titik tengah, dan
+begitu jangkarnya bergeser, radius barunya menjangkau lebih jauh lagi —
+penyerang berjalan menuntun jangkar keluar dari warung. Tanpa batas,
+seretannya mencapai 38 m.
+
+Tiga hal menahannya, dan dua di antaranya sudah ada sejak awal:
+
+1. **Batas geser 20 m** dari titik mula-mula. Dipilih dari kalibrasi:
+   titik benar sendiri bisa berjarak ~16 m (2 sigma) dari pembacaan
+   pertama, jadi batas di bawah itu mengunci jangkar pada galat awalnya
+   dan membuang seluruh manfaatnya.
+2. **Hanya pengamat BARU yang menggeser.** Pemindaian berulang dari satu
+   device tidak menggerakkan apa pun — diuji, 100 pemindaian menggeser
+   0,000 m. Menyeret sejauh N langkah menuntut N pengenal perangkat
+   berbeda: ongkos yang sama dengan memalsukan konsensus.
+3. **Batas sel geohash**, yang ditemukan saat menguji dan bukan
+   dirancang. `record()` mencocokkan binding lewat sel presisi 7, jadi
+   pemindaian di luar sel itu membuat binding BARU alih-alih menggeser
+   yang ada. Serangan seret hanya mungkin dari dalam sel yang sama.
+
+Poin ketiga membuat model kalibrasi pertama saya keliru — ia
+mengandaikan setiap pemindaian menyuap binding yang sama. Modelnya
+dipertahankan sebagai batas ATAS dan dicatat demikian, karena batas yang
+dipilih darinya aman untuk kasus yang lebih longgar.
+
+**Jangkar TERDAFTAR tidak dihaluskan.** Koordinatnya pernyataan
+penyelenggara, bukan taksiran dari pengamatan; membiarkan pemindai
+menggesernya berarti membiarkan mereka memindahkan merchant yang sudah
+dinyatakan resmi berada di suatu titik.
+
+---
+
 ## Hasil pengujian
 
 ```

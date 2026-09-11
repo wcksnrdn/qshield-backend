@@ -122,6 +122,7 @@ bukan sekadar gangguan UX.
 
 | # | Ancaman | Aktor | Mitigasi | Bukti |
 |---|---|---|---|---|
+| T35 | Menyeret jangkar merchant jujur menjauh dari lokasinya | P5 | Batas geser 20 m dari titik mula-mula; hanya pengamat BARU yang menggeser; pemindaian di luar sel geohash membuat binding baru alih-alih menggeser | `test_invariants.py` #1 "Jangkar menajam" — 500 device, seretan berhenti di batas |
 | T11 | Meracuni jangkar merchant jujur agar skornya naik (DoS reputasi) | P5 | `repeated_anomaly_at_anchor` dimatikan bila yang memindai adalah merchant **mapan** di jangkar itu; "mapan" diambil dari putusan Layer 1 | `test_adversarial.py` "Meracuni jangkar merchant jujur" |
 | T12 | Merchant bersebelahan saling memicu alarm | — (bukan serangan, tapi merusak A4) | Koeksistensi dibedakan dari penggantian: bila keduanya mapan dan aktif → `adjacent_merchant`, bobot ringan | `test_invariants.py` #7 (jarak 5-35 m) |
 | T13 | Putusan palsu dari GPS yang tidak layak dipercaya | P3 | `accuracy_m` > 100 m → menolak memberi putusan lokasi, `unknown` + alasan eksplisit | `test_invariants.py` #6 |
@@ -170,7 +171,7 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 |---|---|---|---|---|
 | R1 | **Mock location / GPS palsu** | Server tidak bisa memverifikasi koordinat. Klien WEB tidak bisa memeriksa integritas perangkat — browser sengaja tidak membocorkannya | **Slot protokolnya sudah ada**: `device_integrity` diisi klien native, dan PJP yang mengintegrasikan sudah punya aplikasi native | **Dipersempit jauh.** `mock_location: true` menolak putusan lokasi sama sekali; root & attestation gagal diberi skor; ketiadaan laporan diungkapkan (`not_provided`), tidak dianggap aman |
 | R2 | **Replay QR dinamis** | Tidak ada pelacakan nonce per transaksi; butuh keterlibatan PJP | Di luar jangkauan lapisan pra-pembayaran | Sistem tidak mengklaim bisa (diuji) |
-| R3 | **Merchant berjarak <15 m** | Presisi GPS tidak cukup memisahkan | Ambient WiFi fingerprinting; tidak tersedia lewat browser | Ditangani sebagian oleh `adjacent_merchant` |
+| R3 | **Merchant berjarak <15 m** | Presisi GPS tidak cukup memisahkan | Ambient WiFi fingerprinting; tidak tersedia lewat browser | **Dipersempit.** Jangkar kini rata-rata berjalan, galatnya 6,3 m -> 1,0 m pada 47 pengamatan; ditambah `adjacent_merchant` |
 | R4 | ~~Cold start~~ **DITUTUP untuk merchant terdaftar** | — | PJP mendaftarkan ikatan merchant-lokasi; sisanya tetap `unknown` yang jujur | Merchant terdaftar `verified` seketika tanpa menunggu konsensus |
 | R5 | ~~Merchant sah pindah lokasi~~ **DITUTUP** | — | PJP mendaftarkan ulang di lokasi baru; jangkar lama otomatis berhenti resmi | Tidak lagi memicu alarm |
 | R6 | ~~Merchant keliling~~ **DITUTUP** | — | Ditandai `is_mobile` saat pendaftaran; ikatan lokasi tidak berlaku, dan bindingnya tidak mengklaim lokasi yang disinggahi | Ditangani |

@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS bindings (
     observer_count  INTEGER NOT NULL DEFAULT 0,
     registered_at   TEXT,
     is_mobile       INTEGER NOT NULL DEFAULT 0,
+    -- Titik mula-mula, disimpan HANYA sebagai acuan batas geser.
+    -- lat/lng di atas adalah jangkar yang dipakai: rata-rata berjalan
+    -- dari pemindaian yang masuk radius.
+    origin_lat      REAL,
+    origin_lng      REAL,
     first_seen      TEXT    NOT NULL,
     last_seen       TEXT    NOT NULL,
     anomaly_attempts   INTEGER NOT NULL DEFAULT 0,
@@ -231,6 +236,8 @@ class Store:
             "last_anomaly_at": "TEXT",
             "registered_at": "TEXT",
             "is_mobile": "INTEGER NOT NULL DEFAULT 0",
+            "origin_lat": "REAL",
+            "origin_lng": "REAL",
         }
         for nama, tipe in tambahan.items():
             if nama not in ada:
@@ -416,6 +423,12 @@ class Store:
                            WHERE id = ?""",
                         (binding_id,),
                     )
+                    # Jangkar dihaluskan HANYA saat ada pengamat baru.
+                    # Pemindaian berulang dari device yang sama tidak
+                    # menggeser apa pun — menyeret jangkar sejauh N
+                    # langkah menuntut N pengenal perangkat berbeda,
+                    # ongkos yang sama dengan memalsukan konsensus.
+                    self._haluskan_jangkar(binding_id, lat, lng)
 
                 hasil = self.conn.execute(
                     "SELECT * FROM bindings WHERE id = ?", (binding_id,)
@@ -548,6 +561,56 @@ class Store:
                    WHERE id = ?""",
                 (_iso(now), binding_id),
             )
+
+    def _haluskan_jangkar(self, binding_id: int, lat: float,
+                          lng: float) -> None:
+        """Tarik jangkar ke rata-rata berjalan pengamatan yang masuk radius.
+
+        Dipanggil di dalam transaksi record(), dan hanya ketika seorang
+        pengamat BARU tercatat.
+        """
+        b = self.conn.execute(
+            "SELECT lat, lng, origin_lat, origin_lng, observer_count, "
+            "registered_at FROM bindings WHERE id = ?", (binding_id,)
+        ).fetchone()
+
+        # Jangkar TERDAFTAR tidak dihaluskan: koordinatnya pernyataan
+        # penyelenggara, bukan taksiran dari pengamatan. Membiarkan
+        # pemindai menggesernya berarti membiarkan mereka memindahkan
+        # merchant yang sudah dinyatakan resmi berada di suatu titik.
+        if b["registered_at"]:
+            return
+
+        asal_lat = b["origin_lat"] if b["origin_lat"] is not None else b["lat"]
+        asal_lng = b["origin_lng"] if b["origin_lng"] is not None else b["lng"]
+
+        # Di luar radius jangkar tidak ikut menggeser sama sekali.
+        if geo.haversine_m(b["lat"], b["lng"], lat, lng) > bd.ANCHOR_RADIUS_M:
+            self.conn.execute(
+                "UPDATE bindings SET origin_lat = ?, origin_lng = ? WHERE id = ?",
+                (asal_lat, asal_lng, binding_id))
+            return
+
+        n = max(1, b["observer_count"])
+        baru_lat = b["lat"] + (lat - b["lat"]) / n
+        baru_lng = b["lng"] + (lng - b["lng"]) / n
+
+        if geo.haversine_m(asal_lat, asal_lng, baru_lat, baru_lng) > \
+                bd.ANCHOR_MAX_DRIFT_M:
+            # Sudah menyentuh batas geser. Jangkar ditahan di tempat.
+            self.conn.execute(
+                "UPDATE bindings SET origin_lat = ?, origin_lng = ? WHERE id = ?",
+                (asal_lat, asal_lng, binding_id))
+            return
+
+        gh7 = geo.encode(baru_lat, baru_lng, bd.INDEX_PRECISION)
+        gh6 = geo.encode(baru_lat, baru_lng, bd.AREA_PRECISION)
+        self.conn.execute(
+            """UPDATE bindings
+               SET lat = ?, lng = ?, geohash_7 = ?, geohash_6 = ?,
+                   origin_lat = ?, origin_lng = ?
+               WHERE id = ?""",
+            (baru_lat, baru_lng, gh7, gh6, asal_lat, asal_lng, binding_id))
 
     def seed_binding(
         self,

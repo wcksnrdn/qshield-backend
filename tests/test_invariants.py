@@ -29,6 +29,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 from qshield import binding as b
+from qshield import binding as b_
 from qshield import emvco
 from qshield import geo
 from qshield.store import Store
@@ -103,6 +104,9 @@ def _inv1():
             if geo.encode(blat, blng, p) not in cells:
                 miss[p] += 1
 
+    # Penghalusan jangkar tidak boleh merusak sifat indeks ini: setelah
+    # jangkar bergeser, sel geohash-nya ikut diperbarui, dan pemindaian
+    # di sekitarnya harus tetap terjaring.
     cover7 = 100 * (trials - miss[7]) / trials
     cover8 = 100 * (trials - miss[8]) / trials
     assert cover7 == 100.0, f"presisi 7 hanya mencakup {cover7:.2f}% radius 100 m"
@@ -114,6 +118,89 @@ def _inv1():
 
 
 # --- Invarian 2 ----------------------------------------------------
+
+@invariant(1, "Jangkar menajam seiring pengamatan, dan seretannya terbatas")
+def _inv1b():
+    import math as _m
+
+    from qshield.store import Store as _S
+
+    BENAR = (LAT, LNG)
+
+    # Generator sendiri, benih sendiri: kalau memakai random global,
+    # angkanya bergantung pada berapa banyak bilangan acak yang sudah
+    # dipakai pemeriksaan lain — dan hasilnya berubah-ubah tanpa sebab.
+    rng = random.Random(2026)
+
+    def derau(lat, lng, sigma=8.0):
+        r = abs(rng.gauss(0, sigma))
+        a = rng.uniform(0, 2 * _m.pi)
+        return (lat + (r * _m.cos(a)) / 111320,
+                lng + (r * _m.sin(a)) / (111320 * _m.cos(_m.radians(lat))))
+
+    s = _S(os.path.join(tempfile.mkdtemp(), "anchor.db"))
+    for i in range(47):
+        la, ln = derau(*BENAR)
+        s.record(nmid=REAL, lat=la, lng=ln, device_anon_id=f"jujur-{i:04d}",
+                 merchant_name="WARUNG BU SRI")
+
+    b = s.conn.execute(
+        "SELECT lat, lng, origin_lat, origin_lng, geohash_7 FROM bindings"
+    ).fetchone()
+    galat_akhir = geo.haversine_m(b["lat"], b["lng"], *BENAR)
+    galat_awal = geo.haversine_m(b["origin_lat"], b["origin_lng"], *BENAR)
+
+    assert galat_akhir < galat_awal, (
+        f"jangkar tidak menajam: {galat_awal:.1f} m -> {galat_akhir:.1f} m")
+    assert galat_akhir < 4.0, (
+        f"jangkar masih meleset {galat_akhir:.1f} m setelah 47 pengamatan")
+
+    # Sel indeksnya harus ikut diperbarui saat jangkar bergeser, kalau
+    # tidak binding jadi tidak terjaring query-nya sendiri.
+    assert b["geohash_7"] == geo.encode(b["lat"], b["lng"], b_.INDEX_PRECISION), (
+        "geohash_7 tidak ikut diperbarui saat jangkar bergeser")
+
+    # Serangan seret: dari dalam sel yang sama, sejauh mungkin.
+    sel = b["geohash_7"]
+    titik = None
+    for jarak in (45, 40, 35, 30):
+        for k in range(24):
+            sudut = k * _m.pi / 12
+            la = b["lat"] + (jarak * _m.cos(sudut)) / 111320
+            ln = b["lng"] + (jarak * _m.sin(sudut)) / (
+                111320 * _m.cos(_m.radians(b["lat"])))
+            if geo.encode(la, ln, b_.INDEX_PRECISION) == sel:
+                titik = (la, ln)
+                break
+        if titik:
+            break
+    assert titik, "tidak menemukan titik serangan di dalam sel"
+
+    for i in range(500):
+        s.record(nmid=REAL, lat=titik[0], lng=titik[1],
+                 device_anon_id=f"seret-{i:05d}", merchant_name="WARUNG BU SRI")
+    c = s.conn.execute("SELECT lat, lng FROM bindings WHERE geohash_7 = ?",
+                       (sel,)).fetchone()
+    seret = geo.haversine_m(b["origin_lat"], b["origin_lng"], c["lat"], c["lng"])
+    assert seret <= b_.ANCHOR_MAX_DRIFT_M + 1, (
+        f"500 device menyeret jangkar {seret:.1f} m, melewati batas "
+        f"{b_.ANCHOR_MAX_DRIFT_M} m")
+
+    # Pemindaian berulang dari SATU device tidak menggeser apa pun.
+    sebelum = s.conn.execute(
+        "SELECT lat, lng FROM bindings WHERE geohash_7 = ?", (sel,)).fetchone()
+    for _ in range(100):
+        s.record(nmid=REAL, lat=titik[0], lng=titik[1],
+                 device_anon_id="seret-00000", merchant_name="X")
+    sesudah = s.conn.execute(
+        "SELECT lat, lng FROM bindings WHERE geohash_7 = ?", (sel,)).fetchone()
+    assert geo.haversine_m(sebelum["lat"], sebelum["lng"],
+                           sesudah["lat"], sesudah["lng"]) < 0.01, (
+        "pemindaian berulang dari satu device menggeser jangkar")
+    s.close()
+    return (f"{galat_awal:.1f} m -> {galat_akhir:.1f} m setelah 47 pengamatan; "
+            f"500 device menyeret maksimal {seret:.1f} m")
+
 
 @invariant(2, "Tiga status; 'unknown' tidak pernah berarti aman")
 def _inv2():
