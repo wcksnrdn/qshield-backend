@@ -884,6 +884,61 @@ dilihat sendiri sebelum gladi bersih.
 
 ---
 
+## Keputusan 29 — "Belum dikenal" bukan peringatan, dan tidak boleh terlihat begitu
+
+Muncul dari pengujian lapangan: memindai QRIS merchant sungguhan di
+jalan menghasilkan "Periksa dulu" untuk **semua**-nya, sementara stiker
+palsu tertangkap seketika. Reaksi penggunanya tepat — kalau semuanya
+disuruh diperiksa, pengguna ikut ragu pada yang benar.
+
+**Diagnosisnya bukan penilaian yang kurang tajam.** Setiap merchant baru
+memang `first_observation` → `unknown` → `warn`, persis seperti
+Keputusan 2 dan invarian §2 menuntut. Tidak ada yang bisa diperbaiki di
+skor: `_floor_action()` memastikan `unknown` tidak pernah jatuh ke
+`proceed`, dan itu memang harus begitu.
+
+**Yang keliru adalah tier `warn` mencampur dua hal yang sangat berbeda:**
+
+| Ketiadaan bukti | Ada yang janggal |
+|---|---|
+| `first_observation` | `nmid_second_location` |
+| `young_binding` | `adjacent_merchant` |
+| `low_gps_accuracy` | `implausible_accuracy` |
+| | `repeated_anomaly_at_anchor`, `noncanonical_*` |
+
+Kolom kiri tidak menuduh apa pun. Menampilkannya dengan alarm amber yang
+sama seperti kolom kanan membuat pengguna cemas tanpa sebab — dan
+sistem anti-fraud yang terlalu sering terlihat cemas akan diabaikan.
+Pengguna yang mengabaikan peringatan sama tidak terlindunginya dengan
+yang tidak punya sistem sama sekali. Ini aset A4 di threat model.
+
+**Perbaikannya di penyampaian, bukan di penilaian.** Aksi tetap `warn`;
+yang berubah hanya tampilan ketika sebuah pemindaian HANYA membawa
+sinyal ketiadaan bukti. Tidak ada perubahan skor, tidak ada perubahan
+kontrak API — `signals` memang sudah ada di tanggapan dan kosakatanya
+terbuka.
+
+**Kalimatnya dijaga ketat.** Stiker palsu di lokasi yang belum punya
+jangkar juga mendarat di keadaan netral ini — sistem memang tidak bisa
+membedakannya (batasan cold start, R4). Karena itu keterangannya
+menjelaskan kenapa STATUSNYA belum diketahui dan **tidak pernah**
+menyiratkan merchantnya aman, lalu ditutup dengan pemeriksaan yang bisa
+dilakukan pengguna sendiri tanpa bergantung pada data kami: cocokkan
+nama merchant di layar pembayaran dengan nama di tokonya.
+
+Dikunci di `test_frontend.py`: cold start netral, sementara sinyal
+janggal dan anomaly tidak ikut dilunakkan — termasuk memeriksa bahwa
+kalimatnya masih memuat penegasan "tidak akan menyatakan aman".
+
+**Catatan istilah.** Permintaan awalnya berbunyi "perkuat model ML".
+Q-Shield tidak punya model ML dan tidak pernah punya — ia sistem aturan
+deterministik dan konsensus pengamatan. Menyebutnya ML di depan juri
+akan mengundang pertanyaan "dilatih dengan dataset apa" yang tidak ada
+jawabannya. Sifat deterministik itu justru kekuatannya: setiap putusan
+bisa ditelusuri baris per baris.
+
+---
+
 ## Hasil pengujian
 
 ```

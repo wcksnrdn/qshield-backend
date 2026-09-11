@@ -214,6 +214,46 @@ def _f8():
             f"({len(palsu['reasons'])} alasan tampil)")
 
 
+@cek("Cold start tampil netral, kejanggalan tetap amber")
+def _f9():
+    import re as _re
+    blok = _re.search(r'BELUM_KENAL = new Set\(\[([^\]]+)\]', HTML).group(1)
+    belum = {x.strip().strip('"') for x in blok.split(",") if x.strip()}
+
+    def polos(d):
+        sig = d.get("signals") or []
+        return d["action"] == "warn" and sig and all(x in belum for x in sig)
+
+    c = klien()
+
+    def minta(payload, lat, lng, dev, acc=9.0):
+        return c.post("/api/v1/verify", json={
+            "payload": payload, "lat": lat, "lng": lng,
+            "device_anon_id": dev, "accuracy_m": acc}).json()
+
+    # Merchant sungguhan yang belum dikenal: netral, bukan alarm.
+    baru = minta(qr("ID1055555555555", "936000149000005"), -6.95, 107.65, "ui-baru-0001")
+    assert baru["action"] == "warn", "tier berubah — invarian §2 tersentuh?"
+    assert polos(baru), f"cold start tidak tampil netral: {baru['signals']}"
+
+    # Kejanggalan sungguhan harus TETAP amber, bukan ikut dilunakkan.
+    janggal = minta(qr(), LAT, LNG, "ui-janggal-001", acc=0.4)
+    assert not polos(janggal), (
+        f"sinyal janggal ikut dilunakkan jadi netral: {janggal['signals']}")
+
+    # Anomaly tidak boleh tersentuh sama sekali.
+    palsu = minta(qr("ID1099887766554", "936000149000000002"), LAT, LNG, "ui-palsu-0001")
+    assert palsu["action"] == "cooling_off" and not polos(palsu)
+
+    # Dan yang paling penting: keadaan netral TIDAK BOLEH menyiratkan aman.
+    teks = _re.search(r'nb\.innerHTML = ([^;]+);', SCRIPT).group(1)
+    assert "tidak akan menyatakan aman" in teks, (
+        "keterangan cold start tidak menegaskan bahwa ini bukan klaim aman")
+    assert "cocokkan nama merchant" in teks.lower(), (
+        "tidak memberi pengguna pemeriksaan yang bisa dilakukan sendiri")
+    return "cold start netral; kejanggalan & anomaly tidak ikut dilunakkan"
+
+
 print("=" * 70)
 print("FRONTEND <-> API")
 print("=" * 70)

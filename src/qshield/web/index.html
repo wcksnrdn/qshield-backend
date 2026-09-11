@@ -73,6 +73,18 @@ button{font-family:inherit}
 .band p{margin:1px 0 0;font-size:12.5px;color:var(--ink2);font-weight:500}
 .a-proceed .dot{background:var(--proceed)} .a-proceed h2{color:var(--proceed)}
 .a-warn .dot{background:var(--warn)} .a-warn h2{color:var(--warn)}
+/* "Belum dikenal" BUKAN peringatan — itu kejujuran. Tier aksinya tetap
+   warn (invarian §2 melarang unknown jatuh ke proceed), tapi
+   menampilkannya dengan alarm amber yang sama seperti "ada yang
+   janggal" membuat pengguna ragu tanpa sebab. Sistem anti-fraud yang
+   terlalu sering terlihat cemas akan diabaikan, dan pengguna yang
+   mengabaikan peringatan sama tidak terlindunginya dengan yang tidak
+   punya sistem sama sekali. */
+.a-neutral .dot{background:var(--brand);color:#fff}
+.a-neutral h2{color:var(--ink)}
+.newbie{margin:0 18px 14px;padding:11px 13px;border-radius:11px;font-size:12.5px;
+  background:rgba(124,108,245,.12);border:1px solid rgba(124,108,245,.3);color:#CFC7FF}
+.newbie b{color:#fff}
 .a-step_up .dot{background:var(--stepup)} .a-step_up h2{color:var(--stepup)}
 .a-cooling_off .dot{background:var(--cool);color:#fff} .a-cooling_off h2{color:var(--cool)}
 
@@ -149,6 +161,7 @@ textarea{min-height:78px;resize:vertical;
       <div class="dot" id="dot"></div>
       <div><h2 id="title"></h2><p id="sub"></p></div>
     </div>
+    <div class="newbie" id="newbie" style="display:none"></div>
     <div class="replay" id="replay" style="display:none"></div>
     <div class="cool-timer" id="cool" style="display:none">
       <div class="n" id="coolN">30</div>
@@ -208,6 +221,20 @@ const AKSI = {
   cooling_off:{t:"Berhenti dulu",   s:"Terdeteksi ketidaksesuaian serius", i:"✕"}
 };
 const VERDICT = {verified:"terverifikasi", unknown:"belum dikenal", anomaly:"anomali"};
+
+// Sinyal yang artinya "kami belum punya bukti", bukan "ada yang salah".
+// Tidak satu pun di antaranya menuduh apa pun.
+const BELUM_KENAL = new Set(["first_observation","young_binding","low_gps_accuracy"]);
+
+// Tier aksinya tidak diubah sama sekali — yang diubah hanya cara
+// menyampaikannya. Sebuah pemindaian yang HANYA membawa sinyal
+// "belum kenal" disampaikan apa adanya: kami belum tahu, dan kami
+// tidak akan berpura-pura tahu.
+function polos(d){
+  return d.action === "warn"
+      && (d.signals || []).length > 0
+      && (d.signals || []).every(s => BELUM_KENAL.has(s));
+}
 
 // Pengenal perangkat: acak, bertahan di perangkat ini saja.
 let dev = localStorage.getItem("qs_dev");
@@ -290,12 +317,34 @@ async function verifikasi(payload){
 }
 
 function tampilkan(d){
-  const a = AKSI[d.action] || AKSI.warn;
+  const baru = polos(d);
+  const a = baru
+    ? {t:"Lokasi belum dikenal", s:"Belum ada cukup pengamatan di sini", i:"?"}
+    : (AKSI[d.action] || AKSI.warn);
   const band = $("band");
-  band.className = "band a-" + d.action;
+  band.className = "band a-" + (baru ? "neutral" : d.action);
   $("dot").textContent = a.i;
   $("title").textContent = a.t;
   $("sub").textContent = a.s + " · " + (VERDICT[d.verdict] || d.verdict);
+
+  // Penjelasan yang menutup keraguan: ini normal, bukan tuduhan.
+  const nb = $("newbie");
+  if (baru) {
+    nb.style.display = "";
+    // Hati-hati dengan kalimat ini. Stiker palsu di lokasi yang belum
+    // punya jangkar juga mendarat di sini — sistem memang tidak bisa
+    // membedakannya (batasan cold start). Jadi kalimatnya menjelaskan
+    // kenapa STATUSNYA belum diketahui, dan TIDAK PERNAH menyiratkan
+    // merchantnya aman. Diakhiri pemeriksaan yang bisa dilakukan
+    // pengguna sendiri, yang tidak bergantung pada data kami.
+    nb.innerHTML = "<b>Ini bukan peringatan.</b> Q-Shield belum punya cukup " +
+      "pengamatan di titik ini, dan tidak akan menyatakan aman untuk sesuatu " +
+      "yang belum bisa dibuktikannya — sama seperti antivirus tidak " +
+      "menyatakan berkas tak dikenal itu bersih. Lokasi ini terverifikasi " +
+      "sendiri setelah cukup banyak orang memindainya.<br><br>" +
+      "<b>Sementara itu:</b> cocokkan nama merchant di layar pembayaran " +
+      "dengan nama di tokonya sebelum memasukkan PIN.";
+  } else nb.style.display = "none";
 
   const m = d.merchant || {};
   $("merchant").innerHTML =
