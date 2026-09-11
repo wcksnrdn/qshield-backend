@@ -173,6 +173,7 @@ python scripts/make_qr.py $(python scripts/venue_fixture.py coords)
 
 # gladi bersih / fallback saat GPS ruangan payah
 python scripts/venue_fixture.py replay
+python scripts/demo_lintas_pjp.py             # peragaan berbagi data antar-PJP
 ```
 
 Yang diputar ulang ditandai eksplisit sebagai replay — di permintaan

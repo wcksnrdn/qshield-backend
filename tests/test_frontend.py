@@ -254,6 +254,76 @@ def _f9():
     return "cold start netral; kejanggalan & anomaly tidak ikut dilunakkan"
 
 
+@cek("Layar PIN tidak pernah dirender saat cooling_off")
+def _f10():
+    import re as _re
+    fn = _re.search(r'function bukaPembayaran\(d\)\{(.+?)\n\}',
+                    SCRIPT, _re.S).group(1)
+
+    # Cabang cooling_off harus berakhir TANPA memanggil layarPin().
+    cabang = fn.split('if (d.action === "cooling_off")')[1]
+    cabang_cool = cabang.split('} else if')[0]
+    assert "layarPin" not in cabang_cool, (
+        "cabang cooling_off masih memanggil layarPin — layar PIN-nya "
+        "disembunyikan, bukan tidak pernah ada")
+    assert "PIN-nya tidak pernah dimasukkan" in cabang_cool, (
+        "kalimat terpenting pitch tidak muncul di layarnya")
+
+    # step_up boleh sampai ke PIN, tapi HANYA lewat klik konfirmasi —
+    # bukan otomatis. Yang diperiksa: tidak ada panggilan layarPin yang
+    # berdiri sendiri di cabang itu, hanya yang terpasang sebagai handler.
+    cabang_step = cabang.split('} else if')[1].split("} else {")[0]
+    panggilan = _re.findall(r'(\S*)\s*layarPin\(', cabang_step)
+    assert panggilan, "step_up tidak punya jalan ke PIN sama sekali"
+    for sebelum in panggilan:
+        assert sebelum.endswith("=>"), (
+            f"step_up memanggil layarPin langsung, bukan lewat klik: "
+            f"{sebelum!r}")
+    assert "onclick" in cabang_step, "tidak ada konfirmasi yang harus diklik"
+
+    # Cabang terakhir (proceed) memang boleh langsung.
+    cabang_lolos = cabang.split("} else {")[1]
+    assert "layarPin" in cabang_lolos, "proceed tidak sampai ke PIN"
+    return ("cooling_off berhenti sebelum PIN; step_up hanya lewat klik; "
+            "proceed langsung")
+
+
+@cek("Alur bayar ditandai simulasi secara permanen")
+def _f11():
+    # Halaman yang meniru layar bayar sungguhan tanpa penanda adalah
+    # templat phishing, terlepas dari niat pembuatnya.
+    assert "SIMULASI" in HTML, "tidak ada penanda simulasi"
+    assert 'class="simbar"' in HTML, "penanda simulasi tidak punya wadah tetap"
+    # Penandanya harus di markup, bukan disuntik JS yang bisa dilewati.
+    markup = HTML[:HTML.index("<script>")]
+    assert "SIMULASI" in markup, "penanda simulasi hanya ada di JS"
+    assert "Tidak ada dana yang berpindah" in SCRIPT, (
+        "layar berhasil tidak menegaskan ini simulasi")
+    return "penanda ada di markup, bukan disuntik JS"
+
+
+@cek("Empat tier memetakan ke perlakuan bayar yang berbeda")
+def _f12():
+    c = klien()
+
+    def minta(payload, lat, lng, dev, acc=9.0):
+        return c.post("/api/v1/verify", json={
+            "payload": payload, "lat": lat, "lng": lng,
+            "device_anon_id": dev, "accuracy_m": acc}).json()
+
+    asli = minta(qr(), LAT, LNG, "pay-asli-0001")
+    palsu = minta(qr("ID1099887766554", "936000149000000002"),
+                  LAT, LNG, "pay-palsu-001")
+    assert asli["action"] == "proceed"
+    assert palsu["action"] == "cooling_off"
+
+    # Tombol lanjut berubah kalimat saat dihentikan — pengguna tidak
+    # boleh disodori tombol yang seolah bisa meneruskan pembayaran.
+    assert "Lihat apa yang terjadi berikutnya" in SCRIPT
+    assert "Lanjut ke pembayaran" in SCRIPT
+    return f"asli -> {asli['action']} (PIN), palsu -> {palsu['action']} (tanpa PIN)"
+
+
 print("=" * 70)
 print("FRONTEND <-> API")
 print("=" * 70)

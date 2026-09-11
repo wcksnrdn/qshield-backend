@@ -1065,6 +1065,73 @@ memindahkan risiko ke pengguna mereka sendiri.
 
 ---
 
+## Keputusan 32 — Kalimat terpenting akhirnya punya gambarnya
+
+Naskah pitch menyebut *"The PIN was never entered"* sebagai kalimat
+paling penting. Tapi sampai hari ini frontend hanya menampilkan verdict
+— tidak ada layar PIN sama sekali. Juri mendengar klaimnya tanpa pernah
+melihat apa yang dimaksud.
+
+Sekarang tiap tier memetakan ke perlakuan bayar yang berbeda:
+
+| Tier | Yang terjadi di layar |
+|---|---|
+| `proceed` | layar PIN muncul seperti biasa |
+| `warn` | alasan ditampilkan, pengguna boleh lanjut |
+| `step_up` | konfirmasi dulu — PIN hanya lewat klik sadar |
+| `cooling_off` | **layar PIN tidak pernah dirender** |
+
+Kata "dirender" itu penting dan diuji: pada `cooling_off`, layar PIN
+bukan disembunyikan lewat CSS, melainkan **tidak pernah dibuat**.
+`test_frontend.py` memeriksa cabang itu tidak memanggil `layarPin()`
+sama sekali — kalau suatu saat ada yang mengubahnya jadi
+"tampilkan-lalu-sembunyikan", testnya gagal.
+
+**Penanda SIMULASI dipasang permanen di markup, bukan disuntik JS.**
+Halaman yang meniru layar bayar sungguhan tanpa penanda adalah templat
+phishing, terlepas dari niat pembuatnya. Penanda yang disuntik JS bisa
+dilewati dengan mematikan satu baris; yang ada di markup tidak.
+
+---
+
+## Keputusan 33 — Peragaan lintas-PJP, dan skenario pertamanya yang keliru
+
+Berbagi data antar-PJP adalah pembeda terkuat Q-Shield, tapi selama ini
+hanya diucapkan, tidak pernah diperlihatkan. `scripts/demo_lintas_pjp.py`
+menjalankan kejadian yang sama di dua dunia berdampingan: tiap PJP
+menyimpan datanya sendiri, versus satu lapisan binding dipakai bersama.
+
+**Skenario pertamanya salah, dan salahnya menarik.** Versi awal menyeed
+kedua PJP dengan 47 pengamatan yang sama — dan hasilnya, serangan
+tertahan di kedua dunia. Berbagi data tampak tidak ada gunanya.
+
+Penyebabnya: skenario itu mengandaikan dua penyelenggara mengumpulkan
+data identik secara terpisah. Kalau itu benar, berbagi memang percuma.
+Tapi itu bukan keadaan sebenarnya — **adopsi selalu timpang.**
+Pelanggan sebuah warung kebanyakan memakai satu aplikasi, dan tidak ada
+satu penyelenggara pun yang melihat semua merchant.
+
+Dengan skenario yang benar:
+
+```
+                       DUNIA A (terpisah)     DUNIA B (berbagi)
+  Dompet Alpha         anomaly/cooling_off    anomaly/cooling_off
+  Bayar Beta           unknown/warn  35       anomaly/cooling_off  95
+```
+
+Di dunia terpisah, `Bayar Beta` tidak punya dasar untuk menghentikannya
+— jangkar warung tidak pernah terbentuk di basis datanya, jadi stiker
+palsu tampak seperti merchant baru biasa, dan penggunanya diteruskan ke
+layar PIN. Di dunia berbagi, 47 pengamatan yang dikumpulkan pengguna
+pesaingnya melindunginya.
+
+Pelajarannya bukan cuma soal naskah demo: skenario yang dipilih
+sembarangan bisa membuat fitur yang berguna tampak sia-sia, atau
+sebaliknya. Skenario adalah bagian dari klaim, dan harus diperiksa
+sekeras kodenya.
+
+---
+
 ## Hasil pengujian
 
 ```

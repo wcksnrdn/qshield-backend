@@ -111,6 +111,49 @@ button{font-family:inherit}
   font-variant-numeric:tabular-nums;line-height:1.1}
 .cool-timer small{color:#F5A9AB;font-size:12px}
 
+/* --- alur bayar tiruan --------------------------------------------
+   Ini SIMULASI, dan penandanya sengaja tidak bisa disembunyikan dari
+   UI. Halaman yang meniru layar bayar sungguhan tanpa penanda adalah
+   templat phishing, terlepas dari niat pembuatnya. */
+.pay{position:fixed;inset:0;background:var(--bg);z-index:8;display:none;
+  flex-direction:column;overflow:auto}
+.pay.show{display:flex}
+.simbar{background:var(--brand2);color:#fff;text-align:center;
+  padding:7px 12px;font-size:11.5px;font-weight:700;letter-spacing:.4px}
+.paywrap{max-width:520px;margin:0 auto;width:100%;padding:18px;flex:1;
+  display:flex;flex-direction:column}
+.payhead{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.payhead button{background:none;border:0;color:var(--ink2);font-size:22px;cursor:pointer}
+.paycard{background:var(--card);border:1px solid var(--line);border-radius:18px;
+  padding:18px;margin-bottom:16px}
+.paycard .to{font-size:12px;color:var(--ink2);font-weight:600}
+.paycard .nm{font-size:18px;font-weight:800;margin:3px 0 2px}
+.paycard .id{font-size:11.5px;color:var(--ink2);
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.amt{font-size:32px;font-weight:800;text-align:center;margin:14px 0 20px;
+  font-variant-numeric:tabular-nums}
+.pinrow{display:flex;gap:13px;justify-content:center;margin-bottom:8px}
+.pindot{width:15px;height:15px;border-radius:50%;background:var(--line);
+  transition:background .15s}
+.pindot.on{background:var(--brand)}
+.pinlabel{text-align:center;font-size:12.5px;color:var(--ink2);margin-bottom:18px}
+.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:auto}
+.keys button{padding:17px;border-radius:14px;border:1px solid var(--line);
+  background:var(--card);color:var(--ink);font-size:20px;font-weight:700;cursor:pointer}
+.keys button:active{background:var(--bg2)}
+.keys .blank{border:0;background:none}
+.blocked{text-align:center;padding:34px 20px}
+.blocked .ic{font-size:52px;margin-bottom:14px}
+.blocked h2{margin:0 0 8px;font-size:20px;color:var(--cool)}
+.blocked p{color:var(--ink2);font-size:14px;margin:0 0 6px}
+.blocked .quote{margin-top:22px;padding:15px;border-radius:12px;font-size:14.5px;
+  background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.3);color:#F5A9AB;
+  font-weight:600}
+.done{text-align:center;padding:44px 20px}
+.done .ic{font-size:54px;color:var(--proceed);margin-bottom:12px}
+.done h2{margin:0 0 6px;font-size:20px}
+.done p{color:var(--ink2);font-size:13.5px}
+
 /* --- panel setelan --- */
 .sheet{position:fixed;inset:0;background:rgba(8,7,14,.7);display:none;
   align-items:flex-end;z-index:9}
@@ -170,6 +213,22 @@ textarea{min-height:78px;resize:vertical;
     <div class="merchant" id="merchant"></div>
     <ul class="reasons" id="reasons"></ul>
     <div class="meta" id="meta"></div>
+  </div>
+</div>
+
+<div class="pay" id="pay">
+  <div class="simbar">SIMULASI — bukan pembayaran sungguhan</div>
+  <div class="paywrap">
+    <div class="payhead">
+      <button id="payback" aria-label="Kembali">&#8592;</button>
+      <strong id="payjudul">Konfirmasi pembayaran</strong>
+    </div>
+    <div class="paycard">
+      <div class="to">Bayar ke</div>
+      <div class="nm" id="paynm"></div>
+      <div class="id" id="payid"></div>
+    </div>
+    <div id="paybody"></div>
   </div>
 </div>
 
@@ -382,7 +441,92 @@ function tampilkan(d){
 
   $("result").classList.add("show");
   $("result").scrollIntoView({behavior:"smooth", block:"nearest"});
+
+  // Inilah yang membuat kalimat "PIN-nya tidak pernah dimasukkan" punya
+  // gambar. Tanpa layar ini, juri hanya mendengar klaimnya.
+  terakhir = d;
+  const lanjut = $("btnLanjut");
+  if (lanjut) lanjut.remove();
+  const tombol = document.createElement("button");
+  tombol.id = "btnLanjut";
+  tombol.className = "btn" + (d.action === "cooling_off" ? " ghost" : "");
+  tombol.style.margin = "0 18px 18px";
+  tombol.style.width = "calc(100% - 36px)";
+  tombol.textContent = d.action === "cooling_off"
+    ? "Lihat apa yang terjadi berikutnya"
+    : "Lanjut ke pembayaran";
+  tombol.onclick = () => bukaPembayaran(d);
+  $("result").appendChild(tombol);
 }
+
+// --- alur bayar tiruan ---------------------------------------------
+let terakhir = null, pin = "";
+
+function bukaPembayaran(d){
+  const m = d.merchant || {};
+  $("paynm").textContent = m.name || "Merchant tidak dikenal";
+  $("payid").textContent = m.nmid || "-";
+  pin = "";
+
+  if (d.action === "cooling_off") {
+    // Layar PIN TIDAK PERNAH dirender. Bukan disembunyikan lewat CSS —
+    // memang tidak pernah dibuat. Itulah intinya.
+    $("payjudul").textContent = "Pembayaran ditunda";
+    $("paybody").innerHTML =
+      '<div class="blocked"><div class="ic">&#9209;</div>' +
+      '<h2>Kami hentikan dulu</h2>' +
+      '<p>' + esc((d.reasons || [])[0] || "Terdeteksi ketidaksesuaian serius") + '</p>' +
+      '<p>Penipuan pembayaran bergantung pada terburu-buru. ' +
+      'Jeda ini yang mematahkannya.</p>' +
+      '<div class="quote">PIN-nya tidak pernah dimasukkan.</div></div>';
+  } else if (d.action === "step_up") {
+    $("payjudul").textContent = "Butuh verifikasi tambahan";
+    $("paybody").innerHTML =
+      '<div class="blocked"><div class="ic">&#9888;</div>' +
+      '<h2 style="color:var(--stepup)">Periksa dulu sebelum lanjut</h2>' +
+      '<p>' + esc((d.reasons || [])[0] || "") + '</p>' +
+      '<p>Pastikan nama di atas cocok dengan toko tempat Anda berdiri.</p></div>' +
+      '<button class="btn ghost" id="tetap">Saya sudah cocokkan, lanjut</button>';
+    $("tetap").onclick = () => layarPin(d);
+  } else {
+    layarPin(d);
+  }
+  $("pay").classList.add("show");
+}
+
+function layarPin(d){
+  $("payjudul").textContent = "Masukkan PIN";
+  const nominal = 25000 + Math.floor(Math.random() * 5) * 5000;
+  $("paybody").innerHTML =
+    '<div class="amt">Rp' + nominal.toLocaleString("id-ID") + '</div>' +
+    '<div class="pinrow" id="dots">' +
+      Array.from({length:6}, () => '<div class="pindot"></div>').join("") +
+    '</div><div class="pinlabel">Masukkan 6 digit PIN (simulasi — isi apa saja)</div>' +
+    '<div class="keys" id="keys">' +
+      [1,2,3,4,5,6,7,8,9].map(n => '<button data-k="' + n + '">' + n + '</button>').join("") +
+      '<button class="blank"></button><button data-k="0">0</button>' +
+      '<button data-k="x">&#9003;</button></div>';
+
+  $("keys").onclick = e => {
+    const k = e.target.dataset && e.target.dataset.k;
+    if (!k) return;
+    if (k === "x") pin = pin.slice(0, -1);
+    else if (pin.length < 6) pin += k;
+    document.querySelectorAll("#dots .pindot").forEach((el, i) =>
+      el.classList.toggle("on", i < pin.length));
+    if (pin.length === 6) setTimeout(selesai, 260);
+  };
+}
+
+function selesai(){
+  $("payjudul").textContent = "Selesai";
+  $("paybody").innerHTML =
+    '<div class="done"><div class="ic">&#10003;</div>' +
+    '<h2>Pembayaran berhasil</h2>' +
+    '<p>Simulasi. Tidak ada dana yang berpindah.</p></div>';
+}
+
+$("payback").onclick = () => { $("pay").classList.remove("show"); pin = ""; };
 
 const chip = (k,v) => v === undefined || v === null ? "" :
   '<span class="chip">' + k + ' <b>' + esc(String(v)) + '</b></span>';
