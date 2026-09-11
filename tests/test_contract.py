@@ -69,7 +69,14 @@ VERDICT_SAH = {"verified", "unknown", "anomaly"}
 ACTION_SAH = {"proceed", "warn", "step_up", "cooling_off"}
 LOCATION_SOURCE_SAH = {"live", "replay"}
 
-JALUR = {"/api/v1/health", "/api/v1/verify"}
+JALUR = {
+    "/api/v1/health",
+    "/api/v1/verify",
+    # Ditambahkan 11 Sep 2026 bersama pendaftaran merchant. ADITIF —
+    # endpoint baru tidak memecah klien yang sudah ada.
+    "/api/v1/merchants",
+    "/api/v1/merchants/{nmid}",
+}
 
 _hasil = []
 
@@ -107,7 +114,25 @@ def _k1():
     assert all(p.startswith("/api/v1/") for p in ada), (
         "ada endpoint di luar prefiks versi"
     )
-    return " ".join(sorted(ada))
+    return f"{len(ada)} endpoint"
+
+
+@cek("Endpoint baru tertutup secara bawaan")
+def _k1b():
+    # Daftar putih, bukan daftar hitam: endpoint yang lupa didaftarkan
+    # jadi TERTUTUP, bukan terbuka. Kebalikannya adalah cara paling umum
+    # sebuah API bocor saat berkembang.
+    from qshield import api as _api
+    for jalur in SKEMA["paths"]:
+        if not jalur.startswith("/api/"):
+            continue
+        butuh = _api._butuh_kunci(jalur)
+        if jalur in _api.JALUR_TERBUKA:
+            assert not butuh, f"{jalur} ada di daftar putih tapi tetap dikunci"
+        else:
+            assert butuh, f"{jalur} TERBUKA tanpa kunci — tidak disengaja?"
+    terbuka = sorted(_api.JALUR_TERBUKA)
+    return f"hanya {', '.join(terbuka)} yang terbuka"
 
 
 @cek("Field permintaan dan status wajibnya utuh")

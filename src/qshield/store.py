@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS bindings (
     geohash_6       TEXT    NOT NULL,
     merchant_name   TEXT,
     observer_count  INTEGER NOT NULL DEFAULT 0,
+    registered_at   TEXT,
+    is_mobile       INTEGER NOT NULL DEFAULT 0,
     first_seen      TEXT    NOT NULL,
     last_seen       TEXT    NOT NULL,
     anomaly_attempts   INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +74,26 @@ CREATE TABLE IF NOT EXISTS meta (
     value  TEXT NOT NULL
 );
 
+-- Pernyataan penyelenggara, bukan pengamatan pengguna. Sengaja tabel
+-- TERPISAH dari bindings dan observations: keduanya berisi jejak
+-- pengguna dan tunduk pada aturan privasi; yang ini berisi pernyataan
+-- lembaga dan tunduk pada aturan akuntabilitas. Kita PERLU tahu PJP
+-- mana yang mendaftarkan apa — kalau kuncinya bocor, itu satu-satunya
+-- cara mencabut yang terlanjur didaftarkannya.
+CREATE TABLE IF NOT EXISTS registrations (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    nmid           TEXT    NOT NULL,
+    registrar      TEXT    NOT NULL,   -- client_id PJP, bukan pengguna
+    lat            REAL    NOT NULL,
+    lng            REAL    NOT NULL,
+    merchant_name  TEXT,
+    is_mobile      INTEGER NOT NULL DEFAULT 0,
+    registered_at  TEXT    NOT NULL,
+    revoked_at     TEXT,
+    UNIQUE (nmid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reg_nmid ON registrations(nmid);
 CREATE INDEX IF NOT EXISTS idx_bindings_gh7  ON bindings(geohash_7);
 CREATE INDEX IF NOT EXISTS idx_bindings_nmid ON bindings(nmid);
 """
@@ -102,6 +124,8 @@ def _row_to_binding(row: sqlite3.Row) -> bd.Binding:
         observer_count=row["observer_count"],
         first_seen=_parse(row["first_seen"]),
         last_seen=_parse(row["last_seen"]),
+        registered_at=_parse(row["registered_at"]),
+        is_mobile=bool(row["is_mobile"]),
     )
 
 
@@ -205,6 +229,8 @@ class Store:
         tambahan = {
             "anomaly_attempts": "INTEGER NOT NULL DEFAULT 0",
             "last_anomaly_at": "TEXT",
+            "registered_at": "TEXT",
+            "is_mobile": "INTEGER NOT NULL DEFAULT 0",
         }
         for nama, tipe in tambahan.items():
             if nama not in ada:
@@ -400,6 +426,108 @@ class Store:
                 raise
 
         return _row_to_binding(hasil)
+
+    # --- pendaftaran merchant --------------------------------------
+
+    def register(self, nmid: str, registrar: str, lat: float, lng: float,
+                 merchant_name: Optional[str] = None, is_mobile: bool = False,
+                 now: Optional[datetime] = None) -> dict:
+        """Catat pernyataan PJP tentang ikatan merchant-lokasi.
+
+        Ini BUKAN pengamatan: observer_count tidak disentuh sama sekali,
+        jadi pendaftaran tidak bisa dipakai memalsukan konsensus. Yang
+        dilakukannya adalah menandai binding sebagai terdaftar, dan
+        penandaan itu punya sinyal sendiri di penilaian — supaya
+        verified-karena-terdaftar selalu bisa dibedakan dari
+        verified-karena-diamati.
+        """
+        now = now or datetime.now(timezone.utc)
+        gh7 = geo.encode(lat, lng, bd.INDEX_PRECISION)
+        gh6 = geo.encode(lat, lng, bd.AREA_PRECISION)
+        waktu = _iso(now)
+
+        with self._lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                lama = self.conn.execute(
+                    "SELECT registrar, revoked_at FROM registrations "
+                    "WHERE nmid = ?", (nmid,)).fetchone()
+                # Satu PJP tidak boleh membajak pendaftaran PJP lain.
+                if lama and lama["registrar"] != registrar and not lama["revoked_at"]:
+                    self.conn.execute("ROLLBACK")
+                    return {"ok": False, "reason": "terdaftar_pjp_lain"}
+
+                self.conn.execute(
+                    """INSERT INTO registrations
+                       (nmid, registrar, lat, lng, merchant_name, is_mobile,
+                        registered_at, revoked_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+                       ON CONFLICT (nmid) DO UPDATE SET
+                           registrar = excluded.registrar,
+                           lat = excluded.lat, lng = excluded.lng,
+                           merchant_name = excluded.merchant_name,
+                           is_mobile = excluded.is_mobile,
+                           registered_at = excluded.registered_at,
+                           revoked_at = NULL""",
+                    (nmid, registrar, lat, lng, merchant_name,
+                     int(is_mobile), waktu))
+
+                # Relokasi sah: jangkar lama milik NMID ini berhenti
+                # dianggap terdaftar, supaya tidak ada dua tempat resmi.
+                self.conn.execute(
+                    "UPDATE bindings SET registered_at = NULL WHERE nmid = ?",
+                    (nmid,))
+
+                self.conn.execute(
+                    """INSERT INTO bindings
+                       (nmid, lat, lng, geohash_7, geohash_6, merchant_name,
+                        observer_count, first_seen, last_seen,
+                        registered_at, is_mobile)
+                       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                       ON CONFLICT (nmid, geohash_7) DO UPDATE SET
+                           registered_at = excluded.registered_at,
+                           is_mobile = excluded.is_mobile,
+                           merchant_name = COALESCE(excluded.merchant_name,
+                                                    bindings.merchant_name)""",
+                    (nmid, lat, lng, gh7, gh6, merchant_name, waktu, waktu,
+                     waktu, int(is_mobile)))
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
+        return {"ok": True, "nmid": nmid, "registered_at": waktu,
+                "registrar": registrar, "is_mobile": is_mobile}
+
+    def revoke(self, nmid: str, registrar: str,
+               now: Optional[datetime] = None) -> dict:
+        """Cabut pendaftaran. Hanya PJP yang mendaftarkan yang boleh."""
+        now = now or datetime.now(timezone.utc)
+        with self._lock:
+            baris = self.conn.execute(
+                "SELECT registrar, revoked_at FROM registrations WHERE nmid = ?",
+                (nmid,)).fetchone()
+            if not baris:
+                return {"ok": False, "reason": "tidak_terdaftar"}
+            if baris["registrar"] != registrar:
+                return {"ok": False, "reason": "bukan_pendaftarnya"}
+
+            self.conn.execute(
+                "UPDATE registrations SET revoked_at = ? WHERE nmid = ?",
+                (_iso(now), nmid))
+            # Bindingnya TIDAK dihapus: pengamatan yang sudah terkumpul
+            # tetap sah sebagai bukti konsensus. Yang dicabut hanya
+            # status terdaftarnya.
+            self.conn.execute(
+                "UPDATE bindings SET registered_at = NULL WHERE nmid = ?",
+                (nmid,))
+        return {"ok": True, "nmid": nmid, "revoked_at": _iso(now)}
+
+    def registration(self, nmid: str):
+        with self._lock:
+            r = self.conn.execute(
+                "SELECT * FROM registrations WHERE nmid = ? AND revoked_at IS NULL",
+                (nmid,)).fetchone()
+        return dict(r) if r else None
 
     def note_anomaly(self, binding_id: int,
                      now: Optional[datetime] = None) -> None:

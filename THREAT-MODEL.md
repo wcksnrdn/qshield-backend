@@ -144,6 +144,8 @@ bukan sekadar gangguan UX.
 |---|---|---|---|---|
 | T25 | Pihak tak dikenal mengirim pengamatan ke API | P2, P3, P5 | Kunci API per PJP; tanpa kunci valid endpoint verifikasi menolak. Gagal tertutup bila belum dikonfigurasi | `test_hardening.py` "menolak klien tanpa kunci"; "gagal TERTUTUP" |
 | T26 | Kunci API bocor lewat log atau konfigurasi | P4 | Kunci disimpan sebagai sha256; kunci mentah tidak pernah dicatat, bahkan saat autentikasi gagal | `test_hardening.py` "tidak pernah masuk log"; "disimpan sebagai hash" |
+| T30 | Kunci PJP bocor dipakai mendaftarkan stiker palsu | P3 | Tidak bisa dicegah — ini konsekuensi jalur kepercayaan. Dimitigasi agar terlacak dan bisa dibatalkan: pendaftar dicatat, PJP lain tidak bisa membajak (409) atau mencabut (403), dan sinyalnya selalu dibedakan dari konsensus | `test_registration.py` bagian "Penyalahgunaannya" |
+| T31 | PJP membajak pendaftaran merchant PJP lain | P3 | NMID yang sudah terdaftar menolak pendaftaran dari PJP berbeda | `test_registration.py` "tidak bisa membajak" |
 | T27 | Kunci ditebak lewat pengukuran waktu | P3 | `hmac.compare_digest`, dan seluruh daftar ditelusuri sampai habis | `auth.ClientRegistry.authenticate` |
 | T19 | SQL injection lewat `device_anon_id` atau payload | P3 | Seluruh query berparameter; `device_anon_id` dibatasi `^[A-Za-z0-9_-]+$` | `test_hardening.py` "charset aman" |
 | T20 | Karakter kendali / null byte menembus parser atau basis data | P3 | `payload` dibatasi ASCII yang bisa dicetak di batas sistem | `test_hardening.py` "Karakter kendali" |
@@ -166,9 +168,9 @@ diam-diam mengklaim bisa menahan hal-hal di bawah ini.
 | R1 | **Mock location / GPS palsu** | Server tidak bisa memverifikasi koordinat yang diklaim klien. Mitigasi terkuat — perjalanan mustahil per perangkat — **ditutup dengan sengaja** demi privasi (lihat §7) | Deteksi integritas perangkat; butuh SDK native | **Dipersempit.** Akurasi yang mustahil secara fisik ditandai; `accuracy_m` wajib sehingga invarian §6 tidak bisa dilewati dengan menghilangkannya; spoof tetap tidak memberi keuntungan untuk NMID yang bukan milik penyerang |
 | R2 | **Replay QR dinamis** | Tidak ada pelacakan nonce per transaksi; butuh keterlibatan PJP | Di luar jangkauan lapisan pra-pembayaran | Sistem tidak mengklaim bisa (diuji) |
 | R3 | **Merchant berjarak <15 m** | Presisi GPS tidak cukup memisahkan | Ambient WiFi fingerprinting; tidak tersedia lewat browser | Ditangani sebagian oleh `adjacent_merchant` |
-| R4 | **Cold start** | Basis data kosong tidak punya bukti apa pun | Pendaftaran mandiri merchant | Ditangani jujur: `unknown`, bukan `verified` |
-| R5 | **Merchant sah pindah lokasi** | Relokasi tidak bisa dibedakan dari swap tanpa konfirmasi | Jalur konfirmasi merchant | Memicu peringatan sekali (diuji) |
-| R6 | **Merchant keliling** | Model jangkar mengasumsikan lokasi tetap | Penandaan khusus saat pendaftaran | Belum ditangani sama sekali |
+| R4 | ~~Cold start~~ **DITUTUP untuk merchant terdaftar** | — | PJP mendaftarkan ikatan merchant-lokasi; sisanya tetap `unknown` yang jujur | Merchant terdaftar `verified` seketika tanpa menunggu konsensus |
+| R5 | ~~Merchant sah pindah lokasi~~ **DITUTUP** | — | PJP mendaftarkan ulang di lokasi baru; jangkar lama otomatis berhenti resmi | Tidak lagi memicu alarm |
+| R6 | ~~Merchant keliling~~ **DITUTUP** | — | Ditandai `is_mobile` saat pendaftaran; ikatan lokasi tidak berlaku, dan bindingnya tidak mengklaim lokasi yang disinggahi | Ditangani |
 | R7 | **Sidik jari encoding belum tervalidasi lapangan** | Belum punya korpus payload QRIS asli dari berbagai acquirer | Kumpulkan korpus | Bobot kecil dan dibatasi bersama; tidak pernah bisa menggerakkan tier sendirian |
 | R8 | ~~Rate limit per-IP kasar di balik NAT~~ **DITUTUP** | — | Kuota kini dikunci ke `client_id` hasil autentikasi, bukan alamat | Klien di balik NAT tidak lagi saling menghabiskan kuota |
 | R10 | **Penyerang yang menang balapan cold start** | **Dimitigasi sebagian.** `ADJACENT_MIN_RATIO` = 0,10 menuntut basis pengamat sebanding sebelum pengecualian koeksistensi berlaku; serangan modal minimum (3 device) tidak lagi lolos. Penyerang yang mengeluarkan >5 device masih lolos | Penutupan penuh lewat R1; R9 sudah ditutup dan mempersempit populasi penyerang jadi PJP terdaftar | Sedang — biaya penyerang naik, celah belum tertutup |

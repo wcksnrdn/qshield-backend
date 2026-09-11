@@ -58,6 +58,7 @@ python tests/test_adversarial.py              # 13 skenario dari sisi penyerang
 python tests/test_hardening.py                # input, auth, rate limit, audit, konkurensi
 python tests/test_contract.py                 # kunci bentuk API v1
 python tests/test_frontend.py                 # kecocokan halaman dengan API
+python tests/test_registration.py             # pendaftaran merchant + penyalahgunaannya
 PYTHONPATH=scripts python tests/test_api.py   # test_api.py mengimpor scripts/seed.py
 
 python scripts/calibrate_geo.py               # kalibrasi presisi geohash
@@ -235,9 +236,14 @@ Kontrak lengkap beserta kebijakan versinya ada di [`API.md`](API.md),
 dan dikunci oleh `tests/test_contract.py`.
 
 ```
-GET  /api/v1/health
-POST /api/v1/verify
+GET    /api/v1/health
+POST   /api/v1/verify
+POST   /api/v1/merchants           daftarkan ikatan merchant-lokasi
+DELETE /api/v1/merchants/{nmid}    cabut pendaftaran
 ```
+
+Semua kecuali `/health` menuntut header `X-API-Key`. Daftar putih, bukan
+daftar hitam — endpoint baru tertutup secara bawaan.
 
 Seluruh field **wajib**. `accuracy_m` khususnya: tanpa tahu seberapa
 bagus fix GPS-nya, jangkar tidak bisa dinilai sama sekali — dan kalau

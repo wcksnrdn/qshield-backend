@@ -939,6 +939,79 @@ bisa ditelusuri baris per baris.
 
 ---
 
+## Keputusan 30 — Pendaftaran merchant menutup R4, R5, dan R6 sekaligus
+
+Cold start adalah batasan yang paling terasa di lapangan: setiap
+merchant sungguhan yang dipindai berakhir `warn`, karena NMID-nya
+memang belum pernah dilihat. Solusinya sudah ada di peta jalan sejak
+fase 1 ("pendaftaran mandiri & jalur konfirmasi"); yang membuatnya bisa
+dikerjakan sekarang adalah lapisan autentikasi PJP (Keputusan 22).
+
+**Kenapa PJP yang mendaftarkan.** PJP sudah tahu NMID mana milik
+merchant mana — itu data onboarding mereka. Jadi pendaftaran bukan
+klaim baru yang perlu dipercaya, melainkan pemindahan pengetahuan yang
+sudah ada ke tempat yang bisa dipakai memverifikasi.
+
+Tiga batasan tertutup dengan satu fitur:
+
+| | Sebelum | Sesudah |
+|---|---|---|
+| R4 cold start | tiap merchant baru `warn` | terdaftar -> `verified` seketika |
+| R5 merchant pindah | memicu alarm sekali | daftar ulang di lokasi baru |
+| R6 merchant keliling | belum ditangani sama sekali | `is_mobile`, ikatan lokasi tidak berlaku |
+
+**Pemeriksaan terhadap kedelapan invarian dilakukan sebelum menulis
+kode**, dan tiga di antaranya memaksa perubahan rancangan:
+
+- **§2** — pendaftaran menghasilkan `verified`. Boleh, karena
+  pendaftaran adalah BUKTI (pernyataan pihak yang meng-onboard), bukan
+  ketiadaan bukti.
+- **§5** — rumus `60 + min(25, n//2)` dikunci invarian, jadi konflik di
+  jangkar terdaftar mendapat **sinyal sendiri**
+  (`nmid_changed_at_registered_anchor`, bobot datar 85) alih-alih
+  mengubah rumus lama. Datar, karena pendaftaran tidak menguat seiring
+  bertambahnya pemindai.
+- **§8** — atribusi PJP perlu dicatat untuk pencabutan, tapi tidak boleh
+  masuk tabel pengamatan. Solusinya tabel terpisah: `bindings` dan
+  `observations` berisi jejak pengguna dan tunduk aturan privasi;
+  `registrations` berisi pernyataan lembaga dan tunduk aturan
+  akuntabilitas. Aturannya beda, jadi tabelnya beda.
+
+**Jalur kepercayaan baru berarti permukaan serangan baru,** dan itu
+diakui terus terang: kunci PJP yang bocor bisa dipakai mendaftarkan
+stiker palsu sebagai `verified`. Mitigasinya bukan mencegah — melainkan
+membuatnya terlacak dan bisa dibatalkan: tiap pendaftaran mencatat
+pendaftarnya, PJP tidak bisa membajak pendaftaran PJP lain (409), hanya
+pendaftarnya yang bisa mencabut (403), dan sinyalnya selalu berbeda dari
+konsensus sehingga auditor tahu mana yang mana.
+
+Pencabutan mengembalikan status tanpa menghapus pengamatan: konsensus
+yang sudah terkumpul adalah bukti yang sah, terlepas dari status
+pendaftarannya.
+
+**Dua bug ditemukan saat menguji, keduanya dari interaksi fitur baru
+dengan yang lama:**
+
+1. *Binding merchant keliling mengklaim lokasi.* Gerobak siomay yang
+   pernah mangkal di suatu titik membuat warung di titik itu terlihat
+   seperti pertukaran stiker. Satu pendaftaran keliling bisa meracuni
+   setiap jangkar yang pernah disinggahinya.
+2. *Merchant baru daftar selalu gagal uji `ADJACENT_MIN_RATIO`.* Ia
+   punya nol pengamat, jadi rasionya selalu kalah terhadap tetangga mana
+   pun — merchant yang baru didaftarkan langsung dituduh menggusur
+   tetangganya sendiri. Binding terdaftar kini lolos uji rasio tanpa
+   syarat; buktinya pernyataan, bukan jumlah pengamat. Ini tidak membuka
+   lagi celah R10, karena jalur murah 3-device tidak melewati
+   pendaftaran.
+
+**Bug ketiga, tidak berhubungan tapi ikut ketahuan:** `seed.py` menghapus
+`qshield.db` tanpa berkas pendamping `-wal`/`-shm`, sehingga SQLite
+menemukan sidekar yatim dan gagal dengan "disk I/O error". Efek samping
+WAL yang diaktifkan di Keputusan 25 — dan persis akan menggigit saat
+re-seed di venue.
+
+---
+
 ## Hasil pengujian
 
 ```
@@ -955,6 +1028,7 @@ test_hardening.py    25 pemeriksaan: validasi input, autentikasi klien,
                      dan konkurensi
 test_contract.py     kunci bentuk API v1 — gagal kalau ada yang bergeser
 test_frontend.py     kecocokan halaman scanner dengan API
+test_registration.py 14 pemeriksaan: fungsi pendaftaran dan penyalahgunaannya
 ```
 
 Dokumen ancaman terpisah ada di `THREAT-MODEL.md`.

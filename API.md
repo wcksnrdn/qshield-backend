@@ -37,6 +37,8 @@ membuat mereka tidak tahu harus menampilkan apa.
 | 10 Sep 2026 | `location_source` ditambahkan (permintaan opsional + tanggapan) | aditif |
 | 10 Sep 2026 | **`accuracy_m` jadi wajib** | **memecah klien** |
 | 10 Sep 2026 | `X-API-Key` jadi syarat pada `/verify` | **memecah klien** |
+| 11 Sep 2026 | `POST/DELETE /api/v1/merchants` ditambahkan | aditif |
+| 11 Sep 2026 | sinyal `registered_merchant`, `nmid_changed_at_registered_anchor`, `mobile_merchant` | aditif — `signals` memang daftar terbuka |
 
 Dua yang terakhir terjadi sebelum ada klien eksternal, jadi versinya
 tidak dinaikkan. Setelah code freeze, perubahan sekelas itu menuntut
@@ -145,6 +147,56 @@ ada untuk analitik dan penyetelan ambang, bukan untuk ditampilkan.
 `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`.
 
 ---
+
+## `POST /api/v1/merchants`
+
+Mendaftarkan ikatan merchant-lokasi. Yang mendaftarkan adalah PJP yang
+meng-onboard merchant, jadi ia memang mengetahui NMID mana milik siapa.
+Menutup cold start: merchant tidak perlu menunggu tiga pengamat selama
+24 jam.
+
+| Field | Tipe | Wajib | Catatan |
+|---|---|---|---|
+| `nmid` | string | ya | 3–32 karakter alfanumerik |
+| `lat` | number | ya | |
+| `lng` | number | ya | |
+| `merchant_name` | string | tidak | maks 99 karakter |
+| `is_mobile` | boolean | tidak | merchant keliling — ikatan lokasi tidak berlaku |
+
+Mendaftarkan NMID yang sudah terdaftar oleh **PJP yang sama** berarti
+memperbarui — inilah jalur relokasi merchant. Jangkar lama otomatis
+berhenti berstatus resmi.
+
+| Kode | Arti |
+|---|---|
+| `201` | terdaftar |
+| `401` | kunci API tidak valid |
+| `409` | NMID sudah didaftarkan penyelenggara lain |
+| `422` | field tidak lolos validasi |
+
+## `DELETE /api/v1/merchants/{nmid}`
+
+Mencabut pendaftaran. **Hanya PJP yang mendaftarkan yang boleh.**
+
+Pencabutan mengembalikan status, **tidak menghapus pengamatan** —
+konsensus yang sudah terkumpul adalah bukti yang sah, terlepas dari
+status pendaftaran.
+
+| Kode | Arti |
+|---|---|
+| `200` | dicabut |
+| `403` | bukan pendaftarnya |
+| `404` | NMID tidak terdaftar |
+
+### Catatan keamanan
+
+Ini **jalur kepercayaan baru**. Kunci PJP yang bocor bisa dipakai
+mendaftarkan stiker palsu sebagai `verified`. Itu tidak bisa dicegah
+dari sisi Q-Shield — yang bisa dilakukan adalah membuatnya terlacak dan
+bisa dibatalkan: tiap pendaftaran mencatat pendaftarnya, dan sinyal
+`registered_merchant` selalu berbeda dari `established_binding`
+sehingga auditor tahu sebuah verdict `verified` datang dari pernyataan
+atau dari konsensus.
 
 ## `GET /api/v1/health`
 

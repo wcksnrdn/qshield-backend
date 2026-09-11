@@ -25,6 +25,16 @@ INDEX_PRECISION = 7         # presisi geohash untuk indeks query
 AREA_PRECISION = 6          # presisi untuk deteksi sebaran antar-area
 SCATTER_MIN_KM = 1.0        # jarak minimum agar dianggap area berbeda
 
+# Konflik di jangkar TERDAFTAR. Datar, bukan berskala dengan jumlah
+# pengamat — pendaftaran bukan bukti yang menumpuk seiring waktu,
+# melainkan pernyataan pihak yang meng-onboard merchant. Kekuatannya
+# tidak bertambah karena lebih banyak orang memindai.
+#
+# Nilainya dipilih supaya sendirian pun mendarat di cooling_off (>=76),
+# setara konflik konsensus 50 pengamat. Alasannya: penyelenggara
+# menyatakan merchant INI yang ada di sini, dan yang dipindai bukan dia.
+W_REGISTERED_CONFLICT = 85
+
 MIN_OBSERVERS = 3           # device unik sebelum binding dianggap mapan
 ADJACENT_MIN_RATIO = 0.10   # basis pengamat minimum relatif tetangga
 MIN_AGE_HOURS = 24          # rentang minimal pengamatan pertama ke terakhir
@@ -56,6 +66,8 @@ class Binding:
     observer_count: int = 0
     first_seen: Optional[datetime] = None
     last_seen: Optional[datetime] = None
+    registered_at: Optional[datetime] = None
+    is_mobile: bool = False
 
     def __post_init__(self):
         if not self.geohash_7:
@@ -70,7 +82,26 @@ class Binding:
         return (self.last_seen - self.first_seen).total_seconds() / 3600
 
     @property
+    def is_registered(self) -> bool:
+        return self.registered_at is not None
+
+    @property
     def is_established(self) -> bool:
+        """Cukup bukti untuk dianggap mapan.
+
+        Pendaftaran oleh penyelenggara memenuhinya tanpa menunggu
+        konsensus: itu pernyataan pihak yang meng-onboard merchant, dan
+        pernyataan adalah BUKTI — bukan ketiadaan bukti, sehingga
+        invarian §2 tidak dilanggar.
+
+        Yang tidak boleh hilang: sumbernya tetap bisa dibedakan lewat
+        is_registered, dan penilaian memakai sinyal yang berbeda untuk
+        keduanya. "Terverifikasi karena terdaftar" dan "terverifikasi
+        karena diamati banyak orang" adalah dua klaim yang berbeda
+        kekuatannya, dan auditor berhak tahu yang mana.
+        """
+        if self.is_registered:
+            return True
         return (
             self.observer_count >= MIN_OBSERVERS
             and self.age_hours >= MIN_AGE_HOURS
@@ -189,10 +220,40 @@ def evaluate(
     current = next((b for b in at_anchor if b.nmid == nmid), None)
     others = [b for b in at_anchor if b.nmid != nmid]
 
+    # --- Merchant keliling yang terdaftar ----------------------------
+    #
+    # Model jangkar mengandaikan lokasi tetap, dan itu tidak berlaku
+    # untuk pedagang keliling. Hanya PJP yang bisa menandainya, jadi
+    # pengecualian ini adalah tanggung jawab penyelenggara yang
+    # menyatakannya — bukan sesuatu yang bisa diklaim pemindai.
+    kandidat = ([current] if current else []) + list(same_nmid_elsewhere)
+    keliling = next((b for b in kandidat if b.is_registered and b.is_mobile), None)
+    if keliling is not None:
+        reasons.append(
+            f"Terdaftar sebagai merchant keliling"
+            + (f" — {keliling.merchant_name}" if keliling.merchant_name else "")
+        )
+        signals.append("mobile_merchant")
+        return Verdict(
+            status=VERIFIED, action=PROCEED, risk_score=0,
+            reasons=reasons, signals=signals, matched_binding=current,
+        )
+
     # --- Sinyal 1: NMID berubah di jangkar yang sudah mapan ---------
-    conflicting = [b for b in others if b.is_established and not b.is_stale(now)]
+    # Merchant keliling TIDAK mengklaim lokasi, jadi bindingnya tidak
+    # boleh membuat merchant lain terlihat seperti pertukaran stiker.
+    # Gerobak siomay yang pernah mangkal di suatu titik tidak menjadikan
+    # titik itu miliknya. Tanpa pengecualian ini, satu pendaftaran
+    # keliling bisa meracuni setiap jangkar yang pernah disinggahinya.
+    conflicting = [b for b in others
+                   if b.is_established and not b.is_stale(now)
+                   and not (b.is_registered and b.is_mobile)]
     if conflicting:
-        strongest = max(conflicting, key=lambda b: b.observer_count)
+        # Yang terdaftar didahulukan sebagai pembanding: pernyataan
+        # penyelenggara lebih otoritatif daripada akumulasi pengamatan,
+        # berapa pun jumlahnya.
+        strongest = max(
+            conflicting, key=lambda b: (b.is_registered, b.observer_count))
         # Bobot naik seiring kekuatan bukti: binding dengan 40+ pengamat
         # adalah bukti jauh lebih kuat daripada yang baru mencapai ambang.
         confidence = min(25, strongest.observer_count // 2)
@@ -221,9 +282,19 @@ def evaluate(
         # Jujur soal batasnya: ini MENAIKKAN biaya penyerang, bukan
         # menutup celahnya. Penutupan sungguhan menuntut integritas
         # perangkat atau autentikasi klien.
-        basis_sebanding = (
-            current is not None
-            and current.observer_count
+        # Binding TERDAFTAR lolos uji rasio tanpa syarat: buktinya adalah
+        # pernyataan penyelenggara, bukan jumlah pengamat. Merchant yang
+        # baru didaftarkan punya nol pengamat, dan tanpa pengecualian ini
+        # ia langsung dituduh menggusur tetangganya sendiri.
+        #
+        # Ini tidak membuka lagi celah R10: yang ditutup ADJACENT_MIN_RATIO
+        # adalah penyerang yang memupuk binding dengan tiga device murah,
+        # dan jalur itu tidak melewati pendaftaran. Untuk mendaftar,
+        # penyerang butuh kunci PJP — jalur kepercayaan yang berbeda,
+        # yang punya pencatatan dan pencabutannya sendiri.
+        basis_sebanding = current is not None and (
+            current.is_registered
+            or current.observer_count
             >= ADJACENT_MIN_RATIO * strongest.observer_count
         )
         coexisting = (current is not None and current.is_established
@@ -236,6 +307,15 @@ def evaluate(
                 f"Terdapat merchant lain dalam radius "
                 f"{strongest.distance_m(lat, lng):.0f} m yang juga aktif "
                 f"— kemungkinan lokasi bersebelahan"
+            )
+        elif strongest.is_registered:
+            # Sinyal TERPISAH, bukan rumus konsensus yang diubah —
+            # invarian §5 mengunci rumus itu apa adanya.
+            score += W_REGISTERED_CONFLICT
+            signals.append("nmid_changed_at_registered_anchor")
+            reasons.append(
+                "Lokasi ini terdaftar resmi atas merchant lain oleh "
+                "penyelenggara pembayaran"
             )
         else:
             score += 60 + confidence
@@ -274,7 +354,18 @@ def evaluate(
         )
 
     # --- Riwayat jangkar ini sendiri --------------------------------
-    if current and current.is_established:
+    if current and current.is_registered:
+        # Dibedakan dari konsensus dengan sengaja: "terdaftar" dan
+        # "diamati banyak orang" adalah dua klaim berbeda kekuatannya,
+        # dan auditor berhak tahu yang mana yang berlaku.
+        if not conflicting and not areas:
+            score = max(0, score - 20)
+        signals.append("registered_merchant")
+        reasons.append(
+            "Terdaftar resmi di lokasi ini oleh penyelenggara pembayaran"
+            + (f" sebagai {current.merchant_name}" if current.merchant_name else "")
+        )
+    elif current and current.is_established:
         if not conflicting and not areas:
             score = max(0, score - 20)
         signals.append("established_binding")
@@ -296,7 +387,9 @@ def evaluate(
 
     score = max(0, min(100, score))
 
-    if "nmid_changed_at_anchor" in signals or "nmid_scatter" in signals:
+    if ("nmid_changed_at_anchor" in signals
+            or "nmid_changed_at_registered_anchor" in signals
+            or "nmid_scatter" in signals):
         status = ANOMALY
     elif current and current.is_established and score <= 25:
         status = VERIFIED

@@ -66,8 +66,13 @@ def main(lat=None, lng=None):
     lng = lng if lng is not None else DEFAULT_LNG
     WARUNG["lat"], WARUNG["lng"] = lat, lng
 
-    if os.path.exists("qshield.db"):
-        os.remove("qshield.db")
+    # WAL meninggalkan dua berkas pendamping. Menghapus berkas utama
+    # saja membuat SQLite menemukan -wal/-shm yatim dan gagal dengan
+    # "disk I/O error" — persis saat kalian re-seed di venue.
+    for akhiran in ("", "-wal", "-shm"):
+        berkas = "qshield.db" + akhiran
+        if os.path.exists(berkas):
+            os.remove(berkas)
     s = Store("qshield.db")
 
     # Jangkar utama: warung sah dengan riwayat panjang.

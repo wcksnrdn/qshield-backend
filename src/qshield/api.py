@@ -9,9 +9,10 @@ bisa dibaca manusia.
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ from . import config
 from . import behavior as bh
 from . import binding as bd
 from . import emvco
+from . import geo
 from .limits import RateLimiter
 from .store import Store
 
@@ -75,6 +77,16 @@ for _tingkat, _pesan in config.warnings():
 
 VERIFY_PATH = "/api/v1/verify"
 
+# Endpoint yang boleh diakses tanpa kunci. SEMUA jalur /api/ lain
+# dilindungi — daftar putih, bukan daftar hitam. Endpoint baru yang
+# lupa didaftarkan jadi tertutup, bukan terbuka; kebalikannya adalah
+# cara paling umum sebuah API bocor saat berkembang.
+JALUR_TERBUKA = {"/api/v1/health"}
+
+
+def _butuh_kunci(path: str) -> bool:
+    return path.startswith("/api/") and path not in JALUR_TERBUKA
+
 
 # Middleware terdaftar dari yang PALING DALAM ke yang paling luar:
 # Starlette menjalankan yang terakhir didaftarkan lebih dulu. Urutan
@@ -94,7 +106,7 @@ VERIFY_PATH = "/api/v1/verify"
 @app.middleware("http")
 async def batasi_laju(request: Request, call_next):
     """Jendela geser. Dikunci per klien kalau autentikasi aktif."""
-    if request.url.path == VERIFY_PATH:
+    if _butuh_kunci(request.url.path):
         client_id = getattr(request.state, "client_id", None)
         if client_id:
             kunci = f"client:{client_id}"
@@ -131,7 +143,7 @@ async def autentikasi(request: Request, call_next):
     """
     request.state.client_id = None
 
-    if request.url.path != VERIFY_PATH:
+    if not _butuh_kunci(request.url.path):
         return await call_next(request)
 
     if clients.disabled:
@@ -289,6 +301,85 @@ def scanner():
 @app.get("/api/v1/health")
 def health():
     return {"status": "ok", **store.stats()}
+
+
+class RegisterRequest(BaseModel):
+    """Pernyataan penyelenggara tentang ikatan merchant-lokasi.
+
+    Yang mendaftarkan adalah PJP yang meng-onboard merchant, jadi ia
+    memang mengetahui NMID mana milik siapa. Ini menutup cold start:
+    merchant tidak perlu menunggu tiga pengamat selama 24 jam.
+
+    Konsekuensinya jujur — ini jalur kepercayaan baru, dan kunci PJP
+    yang bocor bisa dipakai mendaftarkan stiker palsu. Karena itu tiap
+    pendaftaran dicatat beserta pendaftarnya, bisa dicabut, dan
+    menghasilkan sinyal yang berbeda dari konsensus.
+    """
+
+    nmid: str = Field(..., min_length=3, max_length=32,
+                      pattern=r"^[A-Za-z0-9]+$")
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+    merchant_name: Optional[str] = Field(None, max_length=99)
+    is_mobile: bool = Field(
+        False, description="merchant keliling — ikatan lokasi tidak berlaku")
+
+
+class RegisterResponse(BaseModel):
+    ok: bool
+    nmid: str
+    registrar: Optional[str] = None
+    registered_at: Optional[str] = None
+    is_mobile: bool = False
+    detail: Optional[str] = None
+
+
+@app.post("/api/v1/merchants", response_model=RegisterResponse, status_code=201)
+def daftarkan(req: RegisterRequest, request: Request, response: Response):
+    client_id = getattr(request.state, "client_id", None) or "anonymous"
+    hasil = store.register(
+        nmid=req.nmid, registrar=client_id, lat=req.lat, lng=req.lng,
+        merchant_name=req.merchant_name, is_mobile=req.is_mobile)
+
+    if not hasil.get("ok"):
+        response.status_code = 409
+        audit.record_rejected("register_conflict", f"{req.nmid}:{hasil['reason']}")
+        return RegisterResponse(
+            ok=False, nmid=req.nmid,
+            detail="NMID ini sudah didaftarkan penyelenggara lain")
+
+    audit.get_logger().info(json.dumps({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": "merchant_registered",
+        "nmid": req.nmid,
+        "registrar": client_id,
+        "geohash_7": geo.encode(req.lat, req.lng, bd.INDEX_PRECISION),
+        "is_mobile": req.is_mobile,
+    }, ensure_ascii=False))
+
+    return RegisterResponse(ok=True, nmid=req.nmid, registrar=client_id,
+                            registered_at=hasil["registered_at"],
+                            is_mobile=req.is_mobile)
+
+
+@app.delete("/api/v1/merchants/{nmid}", response_model=RegisterResponse)
+def cabut(nmid: str, request: Request, response: Response):
+    client_id = getattr(request.state, "client_id", None) or "anonymous"
+    hasil = store.revoke(nmid=nmid, registrar=client_id)
+
+    if not hasil.get("ok"):
+        response.status_code = 404 if hasil["reason"] == "tidak_terdaftar" else 403
+        audit.record_rejected("revoke_denied", f"{nmid}:{hasil['reason']}")
+        pesan = {"tidak_terdaftar": "NMID ini tidak terdaftar",
+                 "bukan_pendaftarnya": "Hanya pendaftarnya yang boleh mencabut"}
+        return RegisterResponse(ok=False, nmid=nmid,
+                                detail=pesan[hasil["reason"]])
+
+    audit.get_logger().info(json.dumps({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": "merchant_revoked", "nmid": nmid, "registrar": client_id,
+    }, ensure_ascii=False))
+    return RegisterResponse(ok=True, nmid=nmid, registrar=client_id)
 
 
 @app.post(VERIFY_PATH, response_model=VerifyResponse)
